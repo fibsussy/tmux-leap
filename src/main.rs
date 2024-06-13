@@ -201,7 +201,7 @@ fn reorder_projects_by_history(history: &[String], projects: &[Project]) -> Vec<
 }
 
 fn move_to_tmux_session(dir: &Project) {
-    let tmux_session_name = dir.to_fzf_display();
+    let tmux_session_name_og = dir.to_fzf_display();
     let tmux_list_output = Command::new("tmux")
         .arg("list-sessions")
         .output()
@@ -209,48 +209,70 @@ fn move_to_tmux_session(dir: &Project) {
     let tmux_list_stdout = String::from_utf8_lossy(&tmux_list_output.stdout);
     let tmux_session_already_exists = tmux_list_stdout
         .lines()
-        .any(|line| line.starts_with(&format!("{}:", tmux_session_name)));
+        .any(|line| line.starts_with(&format!("{}:", tmux_session_name_og)));
+    let tmux_session_name = tmux_session_name_og.replace("~", "\\~");
     if !tmux_session_already_exists {
         env::set_current_dir(&Path::new(&dir.path))
             .expect(&format!("Failed to change directory to {}", dir.path));
-        Command::new("tmux")
+        if !Command::new("tmux")
             .arg("new-session")
             .arg("-d")
             .arg("-s")
-            .arg(&tmux_session_name)
-            .output()
-            .expect("Failed to create new tmux session");
-        Command::new("tmux")
+            .arg(&tmux_session_name_og)
+            .status()
+            .expect("Failed to create new tmux session")
+            .success()
+        {
+            eprintln!("Failed to create new tmux session");
+            return;
+        }
+        if !Command::new("tmux")
             .arg("send-keys")
             .arg("-t")
             .arg(&tmux_session_name)
             .arg("clear; v .")
             .arg("C-m")
-            .output()
-            .expect("Failed to send keys to tmux session");
-        Command::new("tmux")
+            .status()
+            .expect("Failed to send keys to tmux session")
+            .success()
+        {
+            eprintln!("Failed to send keys to tmux session");
+            return;
+        }
+        if !Command::new("tmux")
             .arg("split-window")
             .arg("-h")
             .arg("-t")
             .arg(&tmux_session_name)
-            .output()
-            .expect("Failed to split tmux window");
-        Command::new("tmux")
+            .status()
+            .expect("Failed to split tmux window")
+            .success()
+        {
+            eprintln!("Failed to split tmux window");
+            return;
+        }
+        if !Command::new("tmux")
             .arg("select-pane")
             .arg("-t")
             .arg(&tmux_session_name)
             .arg("-L")
-            .output()
-            .expect("Failed to select tmux pane");
+            .status()
+            .expect("Failed to select tmux pane")
+            .success()
+        {
+            eprintln!("Failed to select tmux pane");
+            return;
+        }
     }
-    let attach_status = Command::new("tmux")
+    if !Command::new("tmux")
         .arg("attach-session")
         .arg("-t")
         .arg(&tmux_session_name)
         .env_remove("TMUX")
         .status()
-        .expect("Failed to attach to tmux session");
-    if !attach_status.success() {
+        .expect("Failed to attach to tmux session")
+        .success()
+    {
         eprintln!("Failed to attach to tmux session");
     }
 }
@@ -357,7 +379,7 @@ fn status_projects() {
 
 fn set_depth() {
     let projects_file = get_home_path(".projects");
-    let mut lines = read_lines(&projects_file).unwrap_or_else(|_| vec![]);
+    let lines = read_lines(&projects_file).unwrap_or_else(|_| vec![]);
     let mut selected = Command::new("fzf")
         .arg("--reverse")
         .stdin(Stdio::piped())
@@ -375,27 +397,26 @@ fn set_depth() {
         .expect("Failed to read fzf output");
     if !output.stdout.is_empty() {
         let selected_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        let selected_idx = lines.iter().position(|line| line == &selected_str).unwrap();
-
         println!(
             "Set depth for {}: (Press Enter to remove depth, Ctrl+C to cancel)",
             selected_str
         );
-
         let mut depth_input = String::new();
         std::io::stdin()
             .read_line(&mut depth_input)
             .expect("Failed to read depth input");
-
         let depth_input = depth_input.trim();
-        let re = Regex::new(r"\s--depth\s\d+").unwrap();
-        let mut new_line = re.replace_all(&selected_str, "").to_string();
-
+        let re = Regex::new(r"(.*) --depth \d+").unwrap();
+        let mut new_lines: Vec<String> = lines
+            .into_iter()
+            .filter(|line| !re.is_match(line) || !line.starts_with(&selected_str))
+            .collect();
         if !depth_input.is_empty() {
-            new_line = format!("{} --depth {}", new_line.trim_end(), depth_input);
+            new_lines.push(format!("{} --depth {}", selected_str, depth_input));
+        } else {
+            new_lines.push(selected_str);
         }
-
-        lines[selected_idx] = new_line.trim_end().to_string();
-        write_lines(&projects_file, &lines).unwrap();
+        new_lines.sort();
+        write_lines(&projects_file, &new_lines).unwrap();
     }
 }
