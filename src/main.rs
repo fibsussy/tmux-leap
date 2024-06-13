@@ -18,9 +18,19 @@ struct Opt {
 
 #[derive(Debug, Subcommand)]
 enum Commands {
-    Add,
+    /// Add a project to the .projects file
+    Add {
+        /// The project directory to add. If not provided, the current directory will be added.
+        dir: Option<String>,
+    },
+    /// Delete a project from the .projects file
     Delete,
+    /// List all projects in the .projects file
     List,
+    /// Display the contents of the .projects file
+    Status,
+    /// Set or remove depth for a project
+    SetDepth,
 }
 
 #[derive(Debug, Clone)]
@@ -47,9 +57,11 @@ impl Project {
 fn main() {
     let opt = Opt::parse();
     match opt.command {
-        Some(Commands::Add) => add_project(None),
+        Some(Commands::Add { dir }) => add_project(dir.as_deref()),
         Some(Commands::Delete) => delete_project(),
         Some(Commands::List) => list_projects(),
+        Some(Commands::Status) => status_projects(),
+        Some(Commands::SetDepth) => set_depth(),
         None => main_execution(),
     }
 }
@@ -91,14 +103,12 @@ where
 fn add_project(dir: Option<&str>) {
     let projects_file = get_home_path(".projects");
     touch_file(&projects_file);
-    let current_dir = std::env::current_dir()
-        .unwrap()
-        .to_str()
-        .unwrap()
-        .to_string();
-    let dir = dir.unwrap_or_else(|| &current_dir);
+    let current_dir = env::current_dir().unwrap().to_str().unwrap().to_string();
+    let dir = dir.unwrap_or(&current_dir);
     let mut lines = read_lines(&projects_file).unwrap_or_else(|_| vec![]);
-    lines.push(dir.to_string());
+    if !lines.contains(&dir.to_string()) {
+        lines.push(dir.to_string());
+    }
     write_lines(&projects_file, &lines).unwrap();
 }
 
@@ -108,6 +118,7 @@ fn delete_project() {
     let mut selected = Command::new("fzf")
         .arg("--reverse")
         .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
         .spawn()
         .expect("Failed to execute fzf");
     {
@@ -333,5 +344,58 @@ fn list_projects() {
     let projects = get_projects();
     for project in projects {
         println!("{}", project.path);
+    }
+}
+
+fn status_projects() {
+    let projects_file = get_home_path(".projects");
+    let lines = read_lines(&projects_file).unwrap_or_else(|_| vec![]);
+    for line in lines {
+        println!("{}", line);
+    }
+}
+
+fn set_depth() {
+    let projects_file = get_home_path(".projects");
+    let mut lines = read_lines(&projects_file).unwrap_or_else(|_| vec![]);
+    let mut selected = Command::new("fzf")
+        .arg("--reverse")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .expect("Failed to execute fzf");
+    {
+        let fzf_stdin = selected.stdin.as_mut().expect("Failed to open fzf stdin");
+        fzf_stdin
+            .write_all(lines.join("\n").as_bytes())
+            .expect("Failed to write to fzf stdin");
+    }
+    let output = selected
+        .wait_with_output()
+        .expect("Failed to read fzf output");
+    if !output.stdout.is_empty() {
+        let selected_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        let selected_idx = lines.iter().position(|line| line == &selected_str).unwrap();
+
+        println!(
+            "Set depth for {}: (Press Enter to remove depth, Ctrl+C to cancel)",
+            selected_str
+        );
+
+        let mut depth_input = String::new();
+        std::io::stdin()
+            .read_line(&mut depth_input)
+            .expect("Failed to read depth input");
+
+        let depth_input = depth_input.trim();
+        let re = Regex::new(r"\s--depth\s\d+").unwrap();
+        let mut new_line = re.replace_all(&selected_str, "").to_string();
+
+        if !depth_input.is_empty() {
+            new_line = format!("{} --depth {}", new_line.trim_end(), depth_input);
+        }
+
+        lines[selected_idx] = new_line.trim_end().to_string();
+        write_lines(&projects_file, &lines).unwrap();
     }
 }
