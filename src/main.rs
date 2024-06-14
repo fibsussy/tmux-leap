@@ -265,8 +265,8 @@ fn move_to_tmux_session(dir: &Project) {
         }
     }
     if !Command::new("tmux")
-        //.arg("attach-session")
-        .arg("switch-client")
+        .arg("attach-session")
+        //.arg("switch-client")
         .arg("-t")
         .arg(&tmux_session_name)
         .env_remove("TMUX")
