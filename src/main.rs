@@ -362,7 +362,6 @@ fn main_execution() {
     if selected_str.is_empty() {
         return;
     }
-    dbg!(&selected_str);
     let mut new_history = vec![selected_str.clone()];
     new_history.extend(
         history_lines
