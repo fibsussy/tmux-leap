@@ -44,7 +44,6 @@ impl Project {
             path: path.to_string(),
         }
     }
-
     fn to_fzf_display(&self) -> String {
         let user = whoami::username();
         self.path
@@ -145,7 +144,6 @@ fn get_projects() -> Vec<Project> {
     let lines = read_lines(&projects_file).unwrap_or_else(|_| vec![]);
     let mut projects = Vec::new();
     let re = Regex::new(r"(.*) --depth (\d+)").unwrap();
-
     for line in lines {
         if let Some(captures) = re.captures(&line) {
             let dir = captures.get(1).unwrap().as_str();
@@ -168,7 +166,6 @@ fn get_projects() -> Vec<Project> {
             projects.push(Project::new(&line));
         }
     }
-
     let mut unique_projects = HashSet::new();
     projects
         .into_iter()
@@ -179,10 +176,8 @@ fn get_projects() -> Vec<Project> {
 fn reorder_projects_by_history(history: &[String], projects: &[Project]) -> Vec<Project> {
     let mut reordered_projects = Vec::new();
     let mut seen = HashSet::new();
-
     let projects_map: HashMap<String, &Project> =
         projects.iter().map(|p| (p.to_fzf_display(), p)).collect();
-
     for hist in history {
         if let Some(project) = projects_map.get(hist) {
             if seen.insert(project.path.clone()) {
@@ -190,13 +185,11 @@ fn reorder_projects_by_history(history: &[String], projects: &[Project]) -> Vec<
             }
         }
     }
-
     for project in projects {
         if seen.insert(project.path.clone()) {
             reordered_projects.push(project.clone());
         }
     }
-
     reordered_projects
 }
 
@@ -285,7 +278,6 @@ fn get_current_session() -> Option<String> {
         .arg("#S")
         .output()
         .expect("Failed to execute tmux command");
-
     if output.status.success() {
         let session_name = String::from_utf8_lossy(&output.stdout).trim().to_string();
         Some(session_name)
