@@ -265,7 +265,8 @@ fn move_to_tmux_session(dir: &Project) {
         }
     }
     if !Command::new("tmux")
-        .arg("attach-session")
+        //.arg("attach-session")
+        .arg("switch-client")
         .arg("-t")
         .arg(&tmux_session_name)
         .env_remove("TMUX")
@@ -274,6 +275,23 @@ fn move_to_tmux_session(dir: &Project) {
         .success()
     {
         eprintln!("Failed to attach to tmux session");
+    }
+}
+
+fn get_current_session() -> Option<String> {
+    let output = Command::new("tmux")
+        .arg("display-message")
+        .arg("-p")
+        .arg("#S")
+        .output()
+        .expect("Failed to execute tmux command");
+
+    if output.status.success() {
+        let session_name = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        Some(session_name)
+    } else {
+        eprintln!("Failed to get current tmux session name");
+        None
     }
 }
 
@@ -308,7 +326,18 @@ fn main_execution() {
         new_projects
     };
     let reordered_projects = reorder_projects_by_history(&history_lines, &projects);
-    let project_set: HashSet<_> = projects.iter().map(|p| p.to_fzf_display()).collect();
+    let current_session = get_current_session();
+    let project_set: HashSet<_> = projects
+        .iter()
+        .filter_map(|p| {
+            if let Some(current_session) = &current_session {
+                if Project::new(&p.path).to_fzf_display() == *current_session {
+                    return None;
+                };
+            };
+            Some(p.to_fzf_display())
+        })
+        .collect();
     let mut fzf_through: Vec<String> =
         Vec::with_capacity(history_lines.len() + reordered_projects.len());
     let mut seen = HashSet::new();
