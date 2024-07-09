@@ -19,17 +19,22 @@ struct Opt {
 #[derive(Debug, Subcommand)]
 enum Commands {
     /// Add a project to the .projects file
+    #[command(name = "add", aliases = &["a"])]
     Add {
         /// The project directory to add. If not provided, the current directory will be added.
         dir: Option<String>,
     },
     /// Delete a project from the .projects file
+    #[command(name = "delete", aliases = &["del", "d"])]
     Delete,
     /// List all projects in the .projects file
+    #[command(name = "list", aliases = &["ls", "l"])]
     List,
     /// Display the contents of the .projects file
+    #[command(name = "status", aliases = &["stat", "s"])]
     Status,
     /// Set or remove depth for a project
+    #[command(name = "set-depth", aliases = &["depth", "sd"])]
     SetDepth,
 }
 
@@ -103,12 +108,13 @@ fn add_project(dir: Option<&str>) {
     let projects_file = get_home_path(".projects");
     touch_file(&projects_file);
     let current_dir = env::current_dir().unwrap().to_str().unwrap().to_string();
-    let dir = dir.unwrap_or(&current_dir);
+    let dir = dir.unwrap_or(&current_dir).to_string();
     let mut lines = read_lines(&projects_file).unwrap_or_else(|_| vec![]);
     if !lines.contains(&dir.to_string()) {
-        lines.push(dir.to_string());
+        lines.push(dir.clone());
     }
     write_lines(&projects_file, &lines).unwrap();
+    println!("Added \"{dir}\" to .projects");
 }
 
 fn delete_project() {
@@ -136,6 +142,7 @@ fn delete_project() {
             .filter(|line| line != &selected_str)
             .collect();
         write_lines(&projects_file, &new_lines).unwrap();
+        println!("Deleted \"{selected_str}\" from .projects");
     }
 }
 
@@ -434,9 +441,10 @@ fn set_depth() {
         if !depth_input.is_empty() {
             new_lines.push(format!("{} --depth {}", selected_str, depth_input));
         } else {
-            new_lines.push(selected_str);
+            new_lines.push(selected_str.clone());
         }
         new_lines.sort();
         write_lines(&projects_file, &new_lines).unwrap();
+        println!("Set depth for \"{}\" to {}", selected_str, depth_input);
     }
 }
