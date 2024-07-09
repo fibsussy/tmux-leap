@@ -219,43 +219,43 @@ fn move_to_tmux_session(dir: &Project) {
             eprintln!("Failed to create new tmux session");
             return;
         }
-        if !Command::new("tmux")
-            .arg("send-keys")
-            .arg("-t")
-            .arg(&tmux_session_name)
-            .arg("clear; v .")
-            .arg("C-m")
-            .status()
-            .expect("Failed to send keys to tmux session")
-            .success()
-        {
-            eprintln!("Failed to send keys to tmux session");
-            return;
-        }
-        if !Command::new("tmux")
-            .arg("split-window")
-            .arg("-h")
-            .arg("-t")
-            .arg(&tmux_session_name)
-            .status()
-            .expect("Failed to split tmux window")
-            .success()
-        {
-            eprintln!("Failed to split tmux window");
-            return;
-        }
-        if !Command::new("tmux")
-            .arg("select-pane")
-            .arg("-t")
-            .arg(&tmux_session_name)
-            .arg("-L")
-            .status()
-            .expect("Failed to select tmux pane")
-            .success()
-        {
-            eprintln!("Failed to select tmux pane");
-            return;
-        }
+        //if !Command::new("tmux")
+        //    .arg("send-keys")
+        //    .arg("-t")
+        //    .arg(&tmux_session_name)
+        //    .arg("clear; v .")
+        //    .arg("C-m")
+        //    .status()
+        //    .expect("Failed to send keys to tmux session")
+        //    .success()
+        //{
+        //    eprintln!("Failed to send keys to tmux session");
+        //    return;
+        //}
+        //if !Command::new("tmux")
+        //    .arg("split-window")
+        //    .arg("-h")
+        //    .arg("-t")
+        //    .arg(&tmux_session_name)
+        //    .status()
+        //    .expect("Failed to split tmux window")
+        //    .success()
+        //{
+        //    eprintln!("Failed to split tmux window");
+        //    return;
+        //}
+        //if !Command::new("tmux")
+        //    .arg("select-pane")
+        //    .arg("-t")
+        //    .arg(&tmux_session_name)
+        //    .arg("-L")
+        //    .status()
+        //    .expect("Failed to select tmux pane")
+        //    .success()
+        //{
+        //    eprintln!("Failed to select tmux pane");
+        //    return;
+        //}
     }
     if !Command::new("tmux")
         .arg("attach-session")
