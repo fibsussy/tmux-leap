@@ -3,7 +3,7 @@ use dirs::home_dir;
 use regex::Regex;
 use std::collections::{HashMap, HashSet};
 use std::env;
-use std::fs::{metadata, File, OpenOptions};
+use std::fs::{metadata, remove_file, File, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -36,6 +36,9 @@ enum Commands {
     /// Set or remove depth for a project
     #[command(name = "set-depth", aliases = &["depth", "sd"])]
     SetDepth,
+    /// Clear the cache file
+    #[command(name = "clear-cache", aliases = &["cc"])]
+    ClearCache,
 }
 
 #[derive(Debug, Clone)]
@@ -66,6 +69,7 @@ fn main() {
         Some(Commands::List) => list_projects(),
         Some(Commands::Status) => status_projects(),
         Some(Commands::SetDepth) => set_depth(),
+        Some(Commands::ClearCache) => clear_cache(),
         None => main_execution(),
     }
 }
@@ -446,5 +450,15 @@ fn set_depth() {
         new_lines.sort();
         write_lines(&projects_file, &new_lines).unwrap();
         println!("Set depth for \"{}\" to {}", selected_str, depth_input);
+    }
+}
+
+fn clear_cache() {
+    let cache_file = PathBuf::from("/tmp/.projects_cache");
+    if cache_file.exists() {
+        remove_file(&cache_file).expect("Failed to delete cache file");
+        println!("Cache cleared");
+    } else {
+        println!("No cache file found");
     }
 }
