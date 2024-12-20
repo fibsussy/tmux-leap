@@ -1,4 +1,5 @@
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, Parser, Subcommand};
+use clap_complete::{generate, Shell};
 use dirs::home_dir;
 use regex::Regex;
 use std::collections::{HashMap, HashSet};
@@ -39,6 +40,13 @@ enum Commands {
     /// Clear the cache file
     #[command(name = "clear-cache", aliases = &["cc"])]
     ClearCache,
+    /// Generate shell completion scripts
+    #[command(name = "completion", aliases = &["comp", "c"])]
+    Completion {
+        /// The shell to generate the script for (e.g., bash, zsh, fish, powershell, elvish)
+        #[arg(value_enum)]
+        shell: Shell,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -52,6 +60,7 @@ impl Project {
             path: path.to_string(),
         }
     }
+
     fn to_fzf_display(&self) -> String {
         let user = whoami::username();
         self.path
@@ -70,8 +79,15 @@ fn main() {
         Some(Commands::Status) => status_projects(),
         Some(Commands::SetDepth) => set_depth(),
         Some(Commands::ClearCache) => clear_cache(),
+        Some(Commands::Completion { shell }) => generate_completion(shell),
         None => main_execution(),
     }
+}
+
+fn generate_completion(shell: Shell) {
+    let mut cmd = Opt::command();
+    let bin_name = env!("CARGO_PKG_NAME");
+    generate(shell, &mut cmd, bin_name, &mut std::io::stdout());
 }
 
 fn get_home_path(file: &str) -> PathBuf {
