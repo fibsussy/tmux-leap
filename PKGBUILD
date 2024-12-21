@@ -9,6 +9,7 @@ depends=('fzf')
 makedepends=('rust' 'cargo')
 source=("$pkgname-$pkgver.tar.gz::https://github.com/fibalious/jumper/archive/v$pkgver.tar.gz")
 sha256sums=('SKIP')
+options=('!debug')  # Explicitly disable debug package generation
 
 build() {
     cd "$srcdir/$pkgname-$pkgver"
@@ -22,8 +23,8 @@ package() {
     install -Dm755 "target/release/jumper" "$pkgdir/usr/bin/jumper"
 
     # Dynamically generate completion scripts
-    install -Dm644 /dev/null "$pkgdir/usr/share/bash-completion/completions/jumper"
-    install -Dm644 /dev/null "$pkgdir/usr/share/zsh/site-functions/_jumper"
+    mkdir -p "$pkgdir/usr/share/bash-completion/completions"
+    mkdir -p "$pkgdir/usr/share/zsh/site-functions"
 
     ./target/release/jumper completion bash > "$pkgdir/usr/share/bash-completion/completions/jumper"
     ./target/release/jumper completion zsh > "$pkgdir/usr/share/zsh/site-functions/_jumper"
