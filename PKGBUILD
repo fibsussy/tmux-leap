@@ -1,7 +1,7 @@
 pkgname=jumper
-pkgver=0.1.1
-pkgrel=2
-pkgdesc="fzf through a list of projects"
+pkgver=1.0.0
+pkgrel=1
+pkgdesc="tmux jumper, fzf through a list of projects"
 arch=('x86_64')
 url="https://github.com/fibalious/jumper"
 license=('MIT')

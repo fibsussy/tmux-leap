@@ -227,10 +227,14 @@ fn move_to_tmux_session(dir: &Project) {
         .output()
         .expect("Failed to list tmux sessions");
     let tmux_list_stdout = String::from_utf8_lossy(&tmux_list_output.stdout);
+
+    // Check if the session already exists
     let tmux_session_already_exists = tmux_list_stdout
         .lines()
         .any(|line| line.starts_with(&format!("{}:", tmux_session_name_og)));
     let tmux_session_name = tmux_session_name_og.replace("~", "\\~");
+
+    // Create a new tmux session if it doesn't exist
     if !tmux_session_already_exists {
         env::set_current_dir(&Path::new(&dir.path))
             .expect(&format!("Failed to change directory to {}", dir.path));
@@ -247,17 +251,35 @@ fn move_to_tmux_session(dir: &Project) {
             return;
         }
     }
-    if !Command::new("tmux")
-        .arg("attach-session")
-        //.arg("switch-client")
-        .arg("-t")
-        .arg(&tmux_session_name)
-        .env_remove("TMUX")
-        .status()
-        .expect("Failed to attach to tmux session")
-        .success()
-    {
-        eprintln!("Failed to attach to tmux session");
+
+    // Determine if running inside a tmux session
+    let is_inside_tmux = env::var("TMUX").is_ok();
+
+    if is_inside_tmux {
+        // Running inside tmux: switch client to the session
+        if !Command::new("tmux")
+            .arg("switch-client")
+            .arg("-t")
+            .arg(&tmux_session_name)
+            .status()
+            .expect("Failed to switch tmux client")
+            .success()
+        {
+            eprintln!("Failed to switch tmux client");
+        }
+    } else {
+        // Running outside tmux: attach to the session
+        if !Command::new("tmux")
+            .arg("attach-session")
+            .arg("-t")
+            .arg(&tmux_session_name)
+            .env_remove("TMUX") // Ensure no inherited tmux context
+            .status()
+            .expect("Failed to attach to tmux session")
+            .success()
+        {
+            eprintln!("Failed to attach to tmux session");
+        }
     }
 }
 
