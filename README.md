@@ -5,9 +5,7 @@ This script will give you a command `jumper` and an UI to switch betwween sessio
 
 Arch Linux Install
 ```sh
-
-smth
-
+curl -s https://raw.githubusercontent.com/Fibalious/jumper/refs/heads/main/arch_install.sh | bash
 ```
 
 Recommended bind for tmux
