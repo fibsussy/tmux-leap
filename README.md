@@ -10,7 +10,14 @@ Arch Linux Install
 curl -sSL https://raw.githubusercontent.com/Fibalious/jumper/refs/heads/main/arch_install.sh | sh
 ```
 
-Recommended bind for tmux
+
+### Recommended binds for tmux
+
+no tmux prefix ctrl+f
 ```sh
 bind-key -n C-f popup -E -d '#{pane_current_path}' 'jumper'
+```
+tmux prefix ctrl+f
+```sh
+bind-key C-f popup -E -d '#{pane_current_path}' 'jumper'
 ```
