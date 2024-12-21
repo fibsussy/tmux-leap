@@ -1,6 +1,6 @@
 pkgname=jumper
 pkgver=0.1.1
-pkgrel=0
+pkgrel=2
 pkgdesc="fzf through a list of projects"
 arch=('x86_64')
 url="https://github.com/fibalious/jumper"
@@ -22,8 +22,8 @@ package() {
     install -Dm755 "target/release/jumper" "$pkgdir/usr/bin/jumper"
 
     # Dynamically generate completion scripts
-    mkdir -p "$pkgdir/usr/share/bash-completion/completions"
-    mkdir -p "$pkgdir/usr/share/zsh/site-functions"
+    install -Dm644 /dev/null "$pkgdir/usr/share/bash-completion/completions/jumper"
+    install -Dm644 /dev/null "$pkgdir/usr/share/zsh/site-functions/_jumper"
 
     ./target/release/jumper completion bash > "$pkgdir/usr/share/bash-completion/completions/jumper"
     ./target/release/jumper completion zsh > "$pkgdir/usr/share/zsh/site-functions/_jumper"
