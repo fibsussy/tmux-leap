@@ -166,34 +166,59 @@ fn delete_project() {
     }
 }
 
-fn get_projects() -> Vec<Project> {
-    let projects_file = get_home_path(".projects");
-    let lines = read_lines(&projects_file).unwrap_or_else(|_| vec![]);
+fn get_tmux_sessions() -> Vec<Project> {
     let mut projects = Vec::new();
-    let re = Regex::new(r"(.*) --depth (\d+)").unwrap();
-    for line in lines {
-        if let Some(captures) = re.captures(&line) {
-            let dir = captures.get(1).unwrap().as_str();
-            let depth = captures.get(2).unwrap().as_str().parse::<u32>().unwrap();
-            projects.push(Project::new(dir));
-            let sub_dirs = Command::new("find")
-                .arg("-L")
-                .arg(dir)
-                .arg("-maxdepth")
-                .arg(depth.to_string())
-                .arg("-type")
-                .arg("d")
-                .output()
-                .expect("Failed to execute find");
-            let sub_dirs = String::from_utf8_lossy(&sub_dirs.stdout);
-            for sub_dir in sub_dirs.lines() {
-                projects.push(Project::new(sub_dir));
+    let tmux_list_output = Command::new("tmux")
+        .arg("list-sessions")
+        .arg("-F")
+        .arg("#{session_name}")
+        .output()
+        .expect("Failed to list tmux sessions");
+    dbg!(&tmux_list_output);
+    if tmux_list_output.status.success() {
+        let tmux_sessions = String::from_utf8_lossy(&tmux_list_output.stdout);
+        for session in tmux_sessions.lines() {
+            if let Some(session_name) = session.split(':').next() {
+                projects.push(Project::new(session_name));
             }
-        } else {
-            projects.push(Project::new(&line));
         }
     }
+    projects
+}
+
+fn get_projects() -> Vec<Project> {
+    let projects_file = get_home_path(".projects");
+    let mut projects = Vec::new();
     let mut unique_projects = HashSet::new();
+
+    if let Ok(lines) = read_lines(&projects_file) {
+        let re = Regex::new(r"(.*) --depth (\d+)").unwrap();
+        for line in lines {
+            if let Some(captures) = re.captures(&line) {
+                let dir = captures.get(1).unwrap().as_str();
+                let depth = captures.get(2).unwrap().as_str().parse::<u32>().unwrap();
+                projects.push(Project::new(dir));
+                let sub_dirs = Command::new("find")
+                    .arg("-L")
+                    .arg(dir)
+                    .arg("-maxdepth")
+                    .arg(depth.to_string())
+                    .arg("-type")
+                    .arg("d")
+                    .output()
+                    .expect("Failed to execute find");
+                let sub_dirs = String::from_utf8_lossy(&sub_dirs.stdout);
+                for sub_dir in sub_dirs.lines() {
+                    projects.push(Project::new(sub_dir));
+                }
+            } else {
+                projects.push(Project::new(&line));
+            }
+        }
+    }
+
+    projects.extend(get_tmux_sessions());
+
     projects
         .into_iter()
         .filter(|project| unique_projects.insert(project.path.clone()))
