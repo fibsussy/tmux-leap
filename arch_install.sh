@@ -1,7 +1,7 @@
 #!/bin/bash
 
 set -e
-path=$(realpath ./__tmp_build)
+path=$(realpath /tmp/__fibsussy_jumper_tmp_build)
 
 cleanup() {
     popd &>/dev/null || true
