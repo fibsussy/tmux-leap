@@ -1,3 +1,5 @@
+pub mod tmux;
+
 use clap::{CommandFactory, Parser, Subcommand};
 use clap_complete::{generate, Shell};
 use dirs::home_dir;
@@ -6,7 +8,7 @@ use std::collections::{HashMap, HashSet};
 use std::env;
 use std::fs::{metadata, remove_file, File, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::{Command, Stdio};
 extern crate whoami;
 
@@ -64,9 +66,9 @@ impl Project {
     fn to_fzf_display(&self) -> String {
         let user = whoami::username();
         self.path
-            .replace(&format!("/home/{}", user), "~")
+            .replace(&format!("/home/{user}"), "~")
             .replace("/run/media/fib/ExternalSSD/code", "code")
-            .replace(".", "")
+            .replace('.', "")
     }
 }
 
@@ -119,7 +121,7 @@ where
 {
     let mut file = File::create(filename)?;
     for line in lines {
-        writeln!(file, "{}", line)?;
+        writeln!(file, "{line}")?;
     }
     Ok(())
 }
@@ -130,7 +132,7 @@ fn add_project(dir: Option<&str>) {
     let current_dir = env::current_dir().unwrap().to_str().unwrap().to_string();
     let dir = dir.unwrap_or(&current_dir).to_string();
     let mut lines = read_lines(&projects_file).unwrap_or_else(|_| vec![]);
-    if !lines.contains(&dir.to_string()) {
+    if !lines.contains(&dir) {
         lines.push(dir.clone());
     }
     write_lines(&projects_file, &lines).unwrap();
@@ -222,34 +224,15 @@ fn reorder_projects_by_history(history: &[String], projects: &[Project]) -> Vec<
 
 fn move_to_tmux_session(dir: &Project) {
     let tmux_session_name_og = dir.to_fzf_display();
-    let tmux_list_output = Command::new("tmux")
-        .arg("list-sessions")
-        .output()
-        .expect("Failed to list tmux sessions");
-    let tmux_list_stdout = String::from_utf8_lossy(&tmux_list_output.stdout);
+    let tmux_session_name = tmux_session_name_og.replace('~', "\\~");
 
     // Check if the session already exists
-    let tmux_session_already_exists = tmux_list_stdout
-        .lines()
-        .any(|line| line.starts_with(&format!("{}:", tmux_session_name_og)));
-    let tmux_session_name = tmux_session_name_og.replace("~", "\\~");
+    let tmux_session_already_exists = tmux::session_exists(&tmux_session_name_og);
 
     // Create a new tmux session if it doesn't exist
-    if !tmux_session_already_exists {
-        env::set_current_dir(&Path::new(&dir.path))
-            .expect(&format!("Failed to change directory to {}", dir.path));
-        if !Command::new("tmux")
-            .arg("new-session")
-            .arg("-d")
-            .arg("-s")
-            .arg(&tmux_session_name_og)
-            .status()
-            .expect("Failed to create new tmux session")
-            .success()
-        {
-            eprintln!("Failed to create new tmux session");
-            return;
-        }
+    if !tmux_session_already_exists && !tmux::create_session(&tmux_session_name_og, &dir.path) {
+        eprintln!("Failed to create new tmux session");
+        return;
     }
 
     // Determine if running inside a tmux session
@@ -257,27 +240,12 @@ fn move_to_tmux_session(dir: &Project) {
 
     if is_inside_tmux {
         // Running inside tmux: switch client to the session
-        if !Command::new("tmux")
-            .arg("switch-client")
-            .arg("-t")
-            .arg(&tmux_session_name)
-            .status()
-            .expect("Failed to switch tmux client")
-            .success()
-        {
+        if !tmux::switch_client(&tmux_session_name) {
             eprintln!("Failed to switch tmux client");
         }
     } else {
         // Running outside tmux: attach to the session
-        if !Command::new("tmux")
-            .arg("attach-session")
-            .arg("-t")
-            .arg(&tmux_session_name)
-            .env_remove("TMUX") // Ensure no inherited tmux context
-            .status()
-            .expect("Failed to attach to tmux session")
-            .success()
-        {
+        if !tmux::attach_session(&tmux_session_name) {
             eprintln!("Failed to attach to tmux session");
         }
     }
@@ -337,8 +305,8 @@ fn main_execution() {
             if let Some(current_session) = &current_session {
                 if Project::new(&p.path).to_fzf_display() == *current_session {
                     return None;
-                };
-            };
+                }
+            }
             Some(p.to_fzf_display())
         })
         .collect();
@@ -378,7 +346,7 @@ fn main_execution() {
     new_history.extend(
         history_lines
             .iter()
-            .filter(|&&ref item| item != &selected_str)
+            .filter(|&item| item != &selected_str)
             .cloned(),
     );
     new_history.truncate(2000);
@@ -405,7 +373,7 @@ fn status_projects() {
     let projects_file = get_home_path(".projects");
     let lines = read_lines(&projects_file).unwrap_or_else(|_| vec![]);
     for line in lines {
-        println!("{}", line);
+        println!("{line}");
     }
 }
 
@@ -430,8 +398,7 @@ fn set_depth() {
     if !output.stdout.is_empty() {
         let selected_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
         println!(
-            "Set depth for {}: (Press Enter to remove depth, Ctrl+C to cancel)",
-            selected_str
+            "Set depth for {selected_str}: (Press Enter to remove depth, Ctrl+C to cancel)"
         );
         let mut depth_input = String::new();
         std::io::stdin()
@@ -443,14 +410,14 @@ fn set_depth() {
             .into_iter()
             .filter(|line| !re.is_match(line) || !line.starts_with(&selected_str))
             .collect();
-        if !depth_input.is_empty() {
-            new_lines.push(format!("{} --depth {}", selected_str, depth_input));
-        } else {
+        if depth_input.is_empty() {
             new_lines.push(selected_str.clone());
+        } else {
+            new_lines.push(format!("{selected_str} --depth {depth_input}"));
         }
         new_lines.sort();
         write_lines(&projects_file, &new_lines).unwrap();
-        println!("Set depth for \"{}\" to {}", selected_str, depth_input);
+        println!("Set depth for \"{selected_str}\" to {depth_input}");
     }
 }
 
