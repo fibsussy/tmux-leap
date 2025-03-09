@@ -5,11 +5,11 @@ use clap_complete::{generate, Shell};
 use dirs::home_dir;
 use regex::Regex;
 use std::collections::{HashMap, HashSet};
-use std::env;
-use std::fs::{metadata, remove_file, File, OpenOptions};
+use std::fs::{remove_file, File, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
+use std::{env, thread};
 extern crate whoami;
 
 #[derive(Debug, Parser)]
@@ -69,6 +69,24 @@ impl Project {
             .replace(&format!("/home/{user}"), "~")
             .replace("/run/media/fib/ExternalSSD/code", "code")
             .replace('.', "")
+    }
+
+    fn exists(&self) -> bool {
+        let path = PathBuf::from(&self.path);
+        path.exists() && path.is_dir()
+    }
+}
+
+trait FilterExists {
+    fn filter_exists(&self) -> Vec<Project>;
+}
+
+impl FilterExists for Vec<Project> {
+    fn filter_exists(&self) -> Vec<Project> {
+        self.iter()
+            .filter(|project| project.exists())
+            .cloned()
+            .collect()
     }
 }
 
@@ -169,23 +187,10 @@ fn delete_project() {
 }
 
 fn get_tmux_sessions() -> Vec<Project> {
-    let mut projects = Vec::new();
-    let tmux_list_output = Command::new("tmux")
-        .arg("list-sessions")
-        .arg("-F")
-        .arg("#{session_name}")
-        .output()
-        .expect("Failed to list tmux sessions");
-    dbg!(&tmux_list_output);
-    if tmux_list_output.status.success() {
-        let tmux_sessions = String::from_utf8_lossy(&tmux_list_output.stdout);
-        for session in tmux_sessions.lines() {
-            if let Some(session_name) = session.split(':').next() {
-                projects.push(Project::new(session_name));
-            }
-        }
-    }
-    projects
+    tmux::get_sessions()
+        .iter_mut()
+        .map(|i| Project::new(i))
+        .collect()
 }
 
 fn get_projects() -> Vec<Project> {
@@ -193,6 +198,7 @@ fn get_projects() -> Vec<Project> {
     let mut projects = Vec::new();
     let mut unique_projects = HashSet::new();
 
+    // Load projects from the .projects file
     if let Ok(lines) = read_lines(&projects_file) {
         let re = Regex::new(r"(.*) --depth (\d+)").unwrap();
         for line in lines {
@@ -219,8 +225,10 @@ fn get_projects() -> Vec<Project> {
         }
     }
 
+    // Add tmux sessions to the projects list
     projects.extend(get_tmux_sessions());
 
+    // Filter out duplicates
     projects
         .into_iter()
         .filter(|project| unique_projects.insert(project.path.clone()))
@@ -232,18 +240,23 @@ fn reorder_projects_by_history(history: &[String], projects: &[Project]) -> Vec<
     let mut seen = HashSet::new();
     let projects_map: HashMap<String, &Project> =
         projects.iter().map(|p| (p.to_fzf_display(), p)).collect();
-    for hist in history {
+
+    // Add projects from history first (most recent first)
+    for hist in history.iter().rev() {
         if let Some(project) = projects_map.get(hist) {
             if seen.insert(project.path.clone()) {
                 reordered_projects.push((*project).clone());
             }
         }
     }
+
+    // Add remaining projects that are not in the history
     for project in projects {
         if seen.insert(project.path.clone()) {
             reordered_projects.push(project.clone());
         }
     }
+
     reordered_projects
 }
 
@@ -251,44 +264,21 @@ fn move_to_tmux_session(dir: &Project) {
     let tmux_session_name_og = dir.to_fzf_display();
     let tmux_session_name = tmux_session_name_og.replace('~', "\\~");
 
-    // Check if the session already exists
-    let tmux_session_already_exists = tmux::session_exists(&tmux_session_name_og);
-
-    // Create a new tmux session if it doesn't exist
-    if !tmux_session_already_exists && !tmux::create_session(&tmux_session_name_og, &dir.path) {
+    if !tmux::session_exists(&tmux_session_name_og)
+        && !tmux::create_session(&tmux_session_name_og, &dir.path)
+    {
         eprintln!("Failed to create new tmux session");
         return;
     }
 
-    // Determine if running inside a tmux session
-    let is_inside_tmux = env::var("TMUX").is_ok();
-
-    if is_inside_tmux {
-        // Running inside tmux: switch client to the session
+    if tmux::is_inside_tmux() {
         if !tmux::switch_client(&tmux_session_name) {
             eprintln!("Failed to switch tmux client");
         }
     } else {
-        // Running outside tmux: attach to the session
         if !tmux::attach_session(&tmux_session_name) {
             eprintln!("Failed to attach to tmux session");
         }
-    }
-}
-
-fn get_current_session() -> Option<String> {
-    let output = Command::new("tmux")
-        .arg("display-message")
-        .arg("-p")
-        .arg("#S")
-        .output()
-        .expect("Failed to execute tmux command");
-    if output.status.success() {
-        let session_name = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        Some(session_name)
-    } else {
-        eprintln!("Failed to get current tmux session name");
-        None
     }
 }
 
@@ -296,86 +286,129 @@ fn main_execution() {
     let projects_history_file = get_home_path(".projects_history");
     touch_file(&projects_history_file);
     let history_lines = read_lines(&projects_history_file).unwrap_or_else(|_| vec![]);
-    let projects_file = get_home_path(".projects");
-    let cache_file = PathBuf::from("/tmp/.projects_cache");
-    let projects_metadata =
-        metadata(&projects_file).expect("Unable to read projects file metadata");
-    let cache_metadata = metadata(&cache_file).ok();
-    let projects_last_modified = projects_metadata
-        .modified()
-        .expect("Unable to get modified time");
-    let projects = if cache_metadata.is_some()
-        && cache_metadata
-            .unwrap()
-            .modified()
-            .expect("Unable to get cache modified time")
-            >= projects_last_modified
-    {
-        read_lines(&cache_file)
-            .unwrap()
-            .into_iter()
-            .map(|line| Project::new(&line))
-            .collect()
-    } else {
-        let new_projects = get_projects();
-        let project_paths: Vec<String> = new_projects.iter().map(|p| p.path.clone()).collect();
-        write_lines(&cache_file, &project_paths).unwrap();
-        new_projects
-    };
-    let reordered_projects = reorder_projects_by_history(&history_lines, &projects);
-    let current_session = get_current_session();
-    let project_set: HashSet<_> = projects
-        .iter()
-        .filter_map(|p| {
-            if let Some(current_session) = &current_session {
-                if Project::new(&p.path).to_fzf_display() == *current_session {
-                    return None;
-                }
-            }
-            Some(p.to_fzf_display())
-        })
-        .collect();
-    let mut fzf_through: Vec<String> =
-        Vec::with_capacity(history_lines.len() + reordered_projects.len());
-    let mut seen = HashSet::new();
-    for item in &history_lines {
-        if project_set.contains(item) && seen.insert(item.clone()) {
-            fzf_through.push(item.clone());
-        }
+
+    let temp_file = PathBuf::from("/tmp/jumper_temp_file");
+    File::create(&temp_file).expect("failed to create temp file");
+
+    let fzf_process = start_fzf(&temp_file);
+
+    let temp_file_clone = temp_file.clone();
+    let history_lines_clone = history_lines.clone();
+    thread::spawn(move || {
+        let reordered_projects = load_and_filter_projects(&history_lines_clone);
+        let fzf_through = prepare_fzf_content(&reordered_projects, &history_lines_clone);
+        write_lines(&temp_file_clone, &fzf_through).unwrap();
+    });
+
+    let selected_str = wait_for_fzf_selection(fzf_process);
+    if selected_str.is_empty() {
+        println!("No selection made");
+        return;
     }
-    for project in &reordered_projects {
-        if seen.insert(project.to_fzf_display()) {
-            fzf_through.push(project.to_fzf_display());
-        }
+
+    update_history(&projects_history_file, &history_lines, &selected_str);
+
+    let reordered_projects = load_and_filter_projects(&history_lines);
+    move_to_selected_tmux_session(&reordered_projects, &selected_str);
+
+    if temp_file.exists() {
+        remove_file(&temp_file).expect("Failed to remove temporary file");
     }
-    let mut selected = Command::new("fzf")
-        .arg("--reverse")
+}
+
+fn start_fzf(temp_file: &PathBuf) -> std::process::Child {
+    Command::new("sh")
+        .arg("-c")
+        .arg(format!(
+            "tail -f {} | fzf --layout=reverse --no-border --cycle --extended",
+            temp_file.display()
+        ))
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .spawn()
-        .expect("Failed to execute fzf");
-    {
-        let fzf_stdin = selected.stdin.as_mut().expect("Failed to open fzf stdin");
-        fzf_stdin
-            .write_all(fzf_through.join("\n").as_bytes())
-            .expect("Failed to write to fzf stdin");
+        .expect("Failed to execute fzf")
+}
+
+fn load_and_filter_projects(history_lines: &[String]) -> Vec<Project> {
+    // Always fetch new projects to ensure we have the latest list
+    let new_projects = get_projects();
+
+    // Update the cache with the new projects
+    let cache_file = PathBuf::from("/tmp/.projects_cache");
+    let project_paths: Vec<String> = new_projects.iter().map(|p| p.path.clone()).collect();
+    write_lines(&cache_file, &project_paths).unwrap();
+
+    // Filter out invalid projects
+    let valid_projects = new_projects.filter_exists();
+
+    // Reorder projects based on history
+    reorder_projects_by_history(history_lines, &valid_projects)
+}
+
+fn prepare_fzf_content(reordered_projects: &[Project], history_lines: &[String]) -> Vec<String> {
+    let current_session = tmux::get_current_session();
+    let mut fzf_through: Vec<String> = Vec::new();
+    let mut seen = HashSet::new();
+
+    // Add history items first (most recent first)
+    for item in history_lines.iter().rev() {
+        // Skip the current session
+        if let Some(current_session) = &current_session {
+            if item == current_session {
+                continue;
+            }
+        }
+
+        // Check if the project exists before adding it to fzf_through
+        if let Some(project) = reordered_projects
+            .iter()
+            .find(|p| p.to_fzf_display() == *item)
+        {
+            if project.exists() && seen.insert(item.clone()) {
+                fzf_through.push(item.clone());
+            }
+        }
     }
-    let output = selected
+
+    // Add remaining projects that aren't in the history
+    for project in reordered_projects {
+        let display = project.to_fzf_display();
+
+        // Skip the current session
+        if let Some(current_session) = &current_session {
+            if &display == current_session {
+                continue;
+            }
+        }
+
+        if seen.insert(display.clone()) {
+            fzf_through.push(display);
+        }
+    }
+
+    fzf_through
+}
+
+fn wait_for_fzf_selection(fzf_process: std::process::Child) -> String {
+    let output = fzf_process
         .wait_with_output()
         .expect("Failed to read fzf output");
-    let selected_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if selected_str.is_empty() {
-        return;
-    }
-    let mut new_history = vec![selected_str.clone()];
+    String::from_utf8_lossy(&output.stdout).trim().to_string()
+}
+
+fn update_history(projects_history_file: &PathBuf, history_lines: &[String], selected_str: &str) {
+    let mut new_history = vec![selected_str.to_string()];
     new_history.extend(
         history_lines
             .iter()
-            .filter(|&item| item != &selected_str)
+            .filter(|&item| item != selected_str)
             .cloned(),
     );
     new_history.truncate(2000);
-    write_lines(&projects_history_file, &new_history).unwrap();
+    write_lines(projects_history_file, &new_history).unwrap();
+}
+
+fn move_to_selected_tmux_session(reordered_projects: &[Project], selected_str: &str) {
     if let Some(idx) = reordered_projects
         .iter()
         .position(|p| p.to_fzf_display() == selected_str)
@@ -422,9 +455,7 @@ fn set_depth() {
         .expect("Failed to read fzf output");
     if !output.stdout.is_empty() {
         let selected_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        println!(
-            "Set depth for {selected_str}: (Press Enter to remove depth, Ctrl+C to cancel)"
-        );
+        println!("Set depth for {selected_str}: (Press Enter to remove depth, Ctrl+C to cancel)");
         let mut depth_input = String::new();
         std::io::stdin()
             .read_line(&mut depth_input)
