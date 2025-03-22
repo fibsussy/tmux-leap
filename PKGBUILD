@@ -1,11 +1,11 @@
 pkgname=jumper
-pkgver=1.2.0
+pkgver=1.3.0
 pkgrel=1
 pkgdesc="tmux jumper, fzf through a list of projects"
 arch=('x86_64' 'aarch64')
 url="https://github.com/fibalious/jumper"
 license=('MIT')
-depends=('fzf')
+depends=('fzf' 'tmux')
 makedepends=('rust' 'cargo')
 source=("$pkgname-$pkgver.tar.gz::https://github.com/fibalious/jumper/archive/v$pkgver.tar.gz")
 sha256sums=('SKIP')
