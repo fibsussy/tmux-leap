@@ -4,13 +4,17 @@ use clap::{CommandFactory, Parser, Subcommand};
 use clap_complete::{generate, Shell};
 use dirs::home_dir;
 use regex::Regex;
-use std::collections::{HashMap, HashSet};
-use std::fs::{remove_file, File, OpenOptions};
+use std::collections::HashSet;
+use std::fs::{File, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::{env, thread};
+use tempfile::NamedTempFile;
 extern crate whoami;
+
+const PROJECTS_FILE: &str = ".projects";
+const CACHE_FILE: &str = ".projects_cache";
 
 #[derive(Debug, Parser)]
 #[command(name = "Jumper", about = "fzf through a list of projects")]
@@ -39,9 +43,6 @@ enum Commands {
     /// Set or remove depth for a project
     #[command(name = "set-depth", aliases = &["depth", "sd"])]
     SetDepth,
-    /// Clear the cache file
-    #[command(name = "clear-cache", aliases = &["cc"])]
-    ClearCache,
     /// Generate shell completion scripts
     #[command(name = "completion", aliases = &["comp", "c"])]
     Completion {
@@ -53,27 +54,61 @@ enum Commands {
 
 #[derive(Debug, Clone)]
 struct Project {
-    path: String,
+    display_path: String,
+    expanded_path: String,
+    fzf_display_path: String,
 }
 
 impl Project {
     fn new(path: &str) -> Self {
+        let display_path = path.to_string();
+        let expanded_path = shellexpand::tilde(&display_path).to_string();
+        let fzf_display_path = Self::compute_fzf_display_path(&expanded_path);
+
         Self {
-            path: path.to_string(),
+            display_path,
+            expanded_path,
+            fzf_display_path,
         }
     }
 
-    fn to_fzf_display(&self) -> String {
+    fn compute_fzf_display_path(expanded_path: &str) -> String {
         let user = whoami::username();
-        self.path
-            .replace(&format!("/home/{user}"), "~")
+        expanded_path
+            .replace(&format!("/home/{}", user), "~")
             .replace("/run/media/fib/ExternalSSD/code", "code")
             .replace('.', "")
     }
 
+    fn to_fzf_display(&self) -> &str {
+        &self.fzf_display_path
+    }
+
     fn exists(&self) -> bool {
-        let path = PathBuf::from(&self.path);
+        let path = PathBuf::from(&self.expanded_path);
         path.exists() && path.is_dir()
+    }
+
+    fn attach(&self) {
+        let tmux_session_name_og = self.to_fzf_display();
+        let tmux_session_name = tmux_session_name_og.replace('~', "\\~");
+
+        if !tmux::session_exists(&tmux_session_name_og)
+            && !tmux::create_session(&tmux_session_name_og, &self.expanded_path)
+        {
+            eprintln!("Failed to create new tmux session");
+            return;
+        }
+
+        if tmux::is_inside_tmux() {
+            if !tmux::switch_client(&tmux_session_name) {
+                eprintln!("Failed to switch tmux client");
+            }
+        } else {
+            if !tmux::attach_session(&tmux_session_name) {
+                eprintln!("Failed to attach to tmux session");
+            }
+        }
     }
 }
 
@@ -98,9 +133,8 @@ fn main() {
         Some(Commands::List) => list_projects(),
         Some(Commands::Status) => status_projects(),
         Some(Commands::SetDepth) => set_depth(),
-        Some(Commands::ClearCache) => clear_cache(),
         Some(Commands::Completion { shell }) => generate_completion(shell),
-        None => main_execution(),
+        None => execution(),
     }
 }
 
@@ -111,6 +145,10 @@ fn generate_completion(shell: Shell) {
 }
 
 fn get_home_path(file: &str) -> PathBuf {
+    let mut file = file;
+    if file.starts_with("~") {
+        file = file.strip_prefix("~").unwrap();
+    }
     home_dir()
         .expect("Unable to find home directory")
         .join(file)
@@ -145,20 +183,21 @@ where
 }
 
 fn add_project(dir: Option<&str>) {
-    let projects_file = get_home_path(".projects");
+    let projects_file = get_home_path(PROJECTS_FILE);
     touch_file(&projects_file);
     let current_dir = env::current_dir().unwrap().to_str().unwrap().to_string();
     let dir = dir.unwrap_or(&current_dir).to_string();
+    let project = Project::new(&dir);
     let mut lines = read_lines(&projects_file).unwrap_or_else(|_| vec![]);
-    if !lines.contains(&dir) {
-        lines.push(dir.clone());
+    if !lines.contains(&project.display_path) {
+        lines.push(project.display_path.clone());
     }
     write_lines(&projects_file, &lines).unwrap();
-    println!("Added \"{dir}\" to .projects");
+    println!("Added \"{}\" to .projects", project.display_path);
 }
 
 fn delete_project() {
-    let projects_file = get_home_path(".projects");
+    let projects_file = get_home_path(PROJECTS_FILE);
     let lines = read_lines(&projects_file).unwrap_or_else(|_| vec![]);
     let mut selected = Command::new("fzf")
         .arg("--reverse")
@@ -188,13 +227,13 @@ fn delete_project() {
 
 fn get_tmux_sessions() -> Vec<Project> {
     tmux::get_sessions()
-        .iter_mut()
+        .iter()
         .map(|i| Project::new(i))
         .collect()
 }
 
 fn get_projects() -> Vec<Project> {
-    let projects_file = get_home_path(".projects");
+    let projects_file = get_home_path(PROJECTS_FILE);
     let mut projects = Vec::new();
     let mut unique_projects = HashSet::new();
 
@@ -231,96 +270,107 @@ fn get_projects() -> Vec<Project> {
     // Filter out duplicates
     projects
         .into_iter()
-        .filter(|project| unique_projects.insert(project.path.clone()))
+        .filter(|project| unique_projects.insert(project.display_path.clone()))
         .collect()
 }
 
-fn reorder_projects_by_history(history: &[String], projects: &[Project]) -> Vec<Project> {
-    let mut reordered_projects = Vec::new();
+fn prepare_fzf_content_from_cache(cache_file: &PathBuf, temp_file: &PathBuf) -> Vec<String> {
+    let cache_lines = read_lines(&cache_file).unwrap_or_else(|_| vec![]);
+    let current_session = tmux::get_current_session();
     let mut seen = HashSet::new();
-    let projects_map: HashMap<String, &Project> =
-        projects.iter().map(|p| (p.to_fzf_display(), p)).collect();
 
-    // Add projects from history first (most recent first)
-    for hist in history.iter().rev() {
-        if let Some(project) = projects_map.get(hist) {
-            if seen.insert(project.path.clone()) {
-                reordered_projects.push((*project).clone());
+    let mut file = OpenOptions::new()
+        .append(true)
+        .open(temp_file)
+        .expect("Failed to open temp file for appending");
+
+    cache_lines
+        .into_iter()
+        .filter_map(|line| {
+            let project = Project::new(&line);
+            if let Some(current_session) = &current_session {
+                if project.to_fzf_display() == *current_session {
+                    return None;
+                }
+            }
+            if !project.exists() {
+                return None;
+            }
+            if seen.insert(project.to_fzf_display().to_string()) {
+                writeln!(file, "{}", project.to_fzf_display())
+                    .expect("Failed to write to temp file");
+                Some(project.to_fzf_display().to_string())
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+fn execution() {
+    let cache_file = get_home_path(CACHE_FILE);
+    touch_file(&cache_file);
+
+    let temp_file = NamedTempFile::new().expect("Failed to create temporary file");
+    let temp_path = temp_file.path().to_path_buf();
+
+    let cache_lines = prepare_fzf_content_from_cache(&cache_file, &temp_path);
+
+    let fzf_process = start_fzf(&temp_path);
+
+    let mut seen_items: HashSet<String> = cache_lines.into_iter().collect();
+
+    let temp_path_clone = temp_path.clone();
+    thread::spawn(move || {
+        let projects = load_and_filter_projects();
+        let additional_fzf_through = prepare_fzf_content(&projects);
+
+        let mut file = OpenOptions::new()
+            .append(true)
+            .open(&temp_path_clone)
+            .expect("Failed to open temp file for appending");
+
+        for item in additional_fzf_through {
+            if seen_items.insert(item.clone()) {
+                writeln!(file, "{}", item).expect("Failed to write to temp file");
             }
         }
-    }
-
-    // Add remaining projects that are not in the history
-    for project in projects {
-        if seen.insert(project.path.clone()) {
-            reordered_projects.push(project.clone());
-        }
-    }
-
-    reordered_projects
-}
-
-fn move_to_tmux_session(dir: &Project) {
-    let tmux_session_name_og = dir.to_fzf_display();
-    let tmux_session_name = tmux_session_name_og.replace('~', "\\~");
-
-    if !tmux::session_exists(&tmux_session_name_og)
-        && !tmux::create_session(&tmux_session_name_og, &dir.path)
-    {
-        eprintln!("Failed to create new tmux session");
-        return;
-    }
-
-    if tmux::is_inside_tmux() {
-        if !tmux::switch_client(&tmux_session_name) {
-            eprintln!("Failed to switch tmux client");
-        }
-    } else {
-        if !tmux::attach_session(&tmux_session_name) {
-            eprintln!("Failed to attach to tmux session");
-        }
-    }
-}
-
-fn main_execution() {
-    let projects_history_file = get_home_path(".projects_history");
-    touch_file(&projects_history_file);
-    let history_lines = read_lines(&projects_history_file).unwrap_or_else(|_| vec![]);
-
-    let temp_file = PathBuf::from("/tmp/jumper_temp_file");
-    File::create(&temp_file).expect("failed to create temp file");
-
-    let fzf_process = start_fzf(&temp_file);
-
-    let temp_file_clone = temp_file.clone();
-    let history_lines_clone = history_lines.clone();
-    thread::spawn(move || {
-        let reordered_projects = load_and_filter_projects(&history_lines_clone);
-        let fzf_through = prepare_fzf_content(&reordered_projects, &history_lines_clone);
-        write_lines(&temp_file_clone, &fzf_through).unwrap();
     });
 
     let selected_str = wait_for_fzf_selection(fzf_process);
+    {
+        let cleanup_result = cleanup(&cache_file, &selected_str);
+        if let Err(e) = cleanup_result {
+            eprintln!("Cleanup failed: {}", e);
+        }
+    }
+
     if selected_str.is_empty() {
         println!("No selection made");
         return;
     }
+    load_and_filter_projects()
+        .iter()
+        .find(|p| p.to_fzf_display() == selected_str)
+        .map(|project| project.attach())
+        .expect("Selected project not found");
+}
 
-    update_history(&projects_history_file, &history_lines, &selected_str);
-
-    let reordered_projects = load_and_filter_projects(&history_lines);
-    move_to_selected_tmux_session(&reordered_projects, &selected_str);
-
-    if temp_file.exists() {
-        remove_file(&temp_file).expect("Failed to remove temporary file");
+fn cleanup(cache_file: &PathBuf, selected_str: &str) -> std::io::Result<()> {
+    if !selected_str.is_empty() {
+        let mut cache_lines = read_lines(cache_file).unwrap_or_else(|_| vec![]);
+        cache_lines.retain(|line| line != selected_str);
+        cache_lines.insert(0, selected_str.to_string());
+        write_lines(cache_file, &cache_lines)?;
     }
+    Ok(())
 }
 
 fn start_fzf(temp_file: &PathBuf) -> std::process::Child {
     Command::new("sh")
         .arg("-c")
         .arg(format!(
-            "tail -f {} | fzf --layout=reverse --no-border --cycle --extended",
+            "tail -f -n +0 {} | fzf --layout=reverse --no-border --cycle --extended",
             temp_file.display()
         ))
         .stdin(Stdio::piped())
@@ -329,60 +379,27 @@ fn start_fzf(temp_file: &PathBuf) -> std::process::Child {
         .expect("Failed to execute fzf")
 }
 
-fn load_and_filter_projects(history_lines: &[String]) -> Vec<Project> {
-    // Always fetch new projects to ensure we have the latest list
-    let new_projects = get_projects();
-
-    // Update the cache with the new projects
-    let cache_file = PathBuf::from("/tmp/.projects_cache");
-    let project_paths: Vec<String> = new_projects.iter().map(|p| p.path.clone()).collect();
-    write_lines(&cache_file, &project_paths).unwrap();
-
-    // Filter out invalid projects
-    let valid_projects = new_projects.filter_exists();
-
-    // Reorder projects based on history
-    reorder_projects_by_history(history_lines, &valid_projects)
+fn load_and_filter_projects() -> Vec<Project> {
+    let projects = get_projects().filter_exists();
+    projects
 }
 
-fn prepare_fzf_content(reordered_projects: &[Project], history_lines: &[String]) -> Vec<String> {
+fn prepare_fzf_content(projects: &[Project]) -> Vec<String> {
     let current_session = tmux::get_current_session();
     let mut fzf_through: Vec<String> = Vec::new();
     let mut seen = HashSet::new();
 
-    // Add history items first (most recent first)
-    for item in history_lines.iter().rev() {
-        // Skip the current session
-        if let Some(current_session) = &current_session {
-            if item == current_session {
-                continue;
-            }
-        }
-
-        // Check if the project exists before adding it to fzf_through
-        if let Some(project) = reordered_projects
-            .iter()
-            .find(|p| p.to_fzf_display() == *item)
-        {
-            if project.exists() && seen.insert(item.clone()) {
-                fzf_through.push(item.clone());
-            }
-        }
-    }
-
-    // Add remaining projects that aren't in the history
-    for project in reordered_projects {
+    for project in projects {
         let display = project.to_fzf_display();
 
-        // Skip the current session
         if let Some(current_session) = &current_session {
             if &display == current_session {
                 continue;
             }
         }
 
-        if seen.insert(display.clone()) {
-            fzf_through.push(display);
+        if seen.insert(display) {
+            fzf_through.push(display.to_string());
         }
     }
 
@@ -396,39 +413,15 @@ fn wait_for_fzf_selection(fzf_process: std::process::Child) -> String {
     String::from_utf8_lossy(&output.stdout).trim().to_string()
 }
 
-fn update_history(projects_history_file: &PathBuf, history_lines: &[String], selected_str: &str) {
-    let mut new_history = vec![selected_str.to_string()];
-    new_history.extend(
-        history_lines
-            .iter()
-            .filter(|&item| item != selected_str)
-            .cloned(),
-    );
-    new_history.truncate(2000);
-    write_lines(projects_history_file, &new_history).unwrap();
-}
-
-fn move_to_selected_tmux_session(reordered_projects: &[Project], selected_str: &str) {
-    if let Some(idx) = reordered_projects
-        .iter()
-        .position(|p| p.to_fzf_display() == selected_str)
-    {
-        let dir = reordered_projects.get(idx).unwrap();
-        move_to_tmux_session(dir);
-    } else {
-        println!("L");
-    }
-}
-
 fn list_projects() {
     let projects = get_projects();
     for project in projects {
-        println!("{}", project.path);
+        println!("{}", project.display_path);
     }
 }
 
 fn status_projects() {
-    let projects_file = get_home_path(".projects");
+    let projects_file = get_home_path(PROJECTS_FILE);
     let lines = read_lines(&projects_file).unwrap_or_else(|_| vec![]);
     for line in lines {
         println!("{line}");
@@ -436,7 +429,7 @@ fn status_projects() {
 }
 
 fn set_depth() {
-    let projects_file = get_home_path(".projects");
+    let projects_file = get_home_path(PROJECTS_FILE);
     let lines = read_lines(&projects_file).unwrap_or_else(|_| vec![]);
     let mut selected = Command::new("fzf")
         .arg("--reverse")
@@ -474,15 +467,5 @@ fn set_depth() {
         new_lines.sort();
         write_lines(&projects_file, &new_lines).unwrap();
         println!("Set depth for \"{selected_str}\" to {depth_input}");
-    }
-}
-
-fn clear_cache() {
-    let cache_file = PathBuf::from("/tmp/.projects_cache");
-    if cache_file.exists() {
-        remove_file(&cache_file).expect("Failed to delete cache file");
-        println!("Cache cleared");
-    } else {
-        println!("No cache file found");
     }
 }

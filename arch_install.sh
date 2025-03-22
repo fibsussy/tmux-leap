@@ -12,5 +12,5 @@ trap cleanup EXIT INT TERM
 mkdir -p "$path"
 pushd "$path"
 
-wget "https://raw.githubusercontent.com/Fibalious/jumper/refs/heads/main/PKGBUILD"
+wget "https://raw.githubusercontent.com/fibsussy/jumper/refs/heads/main/PKGBUILD"
 makepkg -si --noconfirm
