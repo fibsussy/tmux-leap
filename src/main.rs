@@ -283,16 +283,14 @@ fn prepare_fzf_content_from_cache(cache_file: &PathBuf, temp_file: &PathBuf) -> 
 
     cache_lines
         .into_iter()
-        .filter_map(|line| {
-            let project = Project::new(&line);
-            if let Some(current_session) = &current_session {
-                if project.to_fzf_display() == *current_session {
-                    return None;
-                }
-            }
-            if !project.exists() {
-                return None;
-            }
+        .map(|line| Project::new(&line))
+        .filter(|project| {
+            current_session
+                .as_ref()
+                .map_or(true, |session| project.to_fzf_display() != *session)
+        })
+        .filter(|project| project.exists())
+        .filter_map(|project| {
             if seen.insert(project.to_fzf_display().to_string()) {
                 writeln!(file, "{}", project.to_fzf_display())
                     .expect("Failed to write to temp file");
