@@ -272,7 +272,12 @@ fn get_projects() -> Vec<Project> {
 }
 
 fn prepare_fzf_content_from_cache(cache_file: &PathBuf, temp_file: &PathBuf) -> Vec<String> {
-    read_lines(&cache_file)
+    let mut output_file = OpenOptions::new()
+        .append(true)
+        .open(temp_file)
+        .expect("Failed to open temp file for appending");
+    
+    read_lines(cache_file)
         .unwrap_or_else(|_| vec![])
         .into_iter()
         .map(|line| Project::new(&line))
@@ -284,15 +289,8 @@ fn prepare_fzf_content_from_cache(cache_file: &PathBuf, temp_file: &PathBuf) -> 
         .filter(|project| project.exists())
         .scan(HashSet::new(), |seen, project| {
             if seen.insert(project.to_fzf_display().to_string()) {
-                writeln!(
-                    OpenOptions::new()
-                        .append(true)
-                        .open(temp_file)
-                        .expect("Failed to open temp file for appending"),
-                    "{}",
-                    project.to_fzf_display()
-                )
-                .expect("Failed to write to temp file");
+                writeln!(&mut output_file, "{}", project.to_fzf_display())
+                    .expect("Failed to write to temp file");
                 Some(project.to_fzf_display().to_string())
             } else {
                 None
