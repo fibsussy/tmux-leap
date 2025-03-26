@@ -272,28 +272,27 @@ fn get_projects() -> Vec<Project> {
 }
 
 fn prepare_fzf_content_from_cache(cache_file: &PathBuf, temp_file: &PathBuf) -> Vec<String> {
-    let cache_lines = read_lines(&cache_file).unwrap_or_else(|_| vec![]);
-    let current_session = tmux::get_current_session();
-    let mut seen = HashSet::new();
-
-    let mut file = OpenOptions::new()
-        .append(true)
-        .open(temp_file)
-        .expect("Failed to open temp file for appending");
-
-    cache_lines
+    read_lines(&cache_file)
+        .unwrap_or_else(|_| vec![])
         .into_iter()
         .map(|line| Project::new(&line))
         .filter(|project| {
-            current_session
+            tmux::get_current_session()
                 .as_ref()
                 .map_or(true, |session| project.to_fzf_display() != *session)
         })
         .filter(|project| project.exists())
-        .filter_map(|project| {
+        .scan(HashSet::new(), |seen, project| {
             if seen.insert(project.to_fzf_display().to_string()) {
-                writeln!(file, "{}", project.to_fzf_display())
-                    .expect("Failed to write to temp file");
+                writeln!(
+                    OpenOptions::new()
+                        .append(true)
+                        .open(temp_file)
+                        .expect("Failed to open temp file for appending"),
+                    "{}",
+                    project.to_fzf_display()
+                )
+                .expect("Failed to write to temp file");
                 Some(project.to_fzf_display().to_string())
             } else {
                 None
