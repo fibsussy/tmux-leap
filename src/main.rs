@@ -46,7 +46,6 @@ enum Commands {
     /// Generate shell completion scripts
     #[command(name = "completion", aliases = &["comp", "c"])]
     Completion {
-        /// The shell to generate the script for (e.g., bash, zsh, fish, powershell, elvish)
         #[arg(value_enum)]
         shell: Shell,
     },
@@ -54,34 +53,42 @@ enum Commands {
 
 #[derive(Debug, Clone)]
 struct Project {
-    display_path: String,
+    shortened_path: String,
     expanded_path: String,
-    fzf_display_path: String,
+    tmux_display_path: String,
 }
 
 impl Project {
     fn new(path: &str) -> Self {
-        let display_path = path.to_string();
-        let expanded_path = shellexpand::tilde(&display_path).to_string();
-        let fzf_display_path = Self::compute_fzf_display_path(&expanded_path);
+        let shortened_path = path.to_string();
+        let expanded_path = shellexpand::tilde(&shortened_path).to_string();
+        let shortened_path = Self::shorten_path(&expanded_path);
+        let tmux_display_path = Self::format_for_tmux(&shortened_path);
 
         Self {
-            display_path,
+            shortened_path,
             expanded_path,
-            fzf_display_path,
+            tmux_display_path,
         }
     }
 
-    fn compute_fzf_display_path(expanded_path: &str) -> String {
-        let user = whoami::username();
-        expanded_path
-            .replace(&format!("/home/{}", user), "~")
-            .replace("/run/media/fib/ExternalSSD/code", "code")
-            .replace('.', "")
+    fn shorten_path(path_str: &str) -> String {
+        let path = PathBuf::from(path_str);
+        let home = home_dir().expect("Unable to find home directory");
+
+        if let Ok(relative) = path.strip_prefix(&home) {
+            format!("~/{}", relative.display())
+        } else {
+            path.display().to_string()
+        }
+    }
+
+    fn format_for_tmux(path: &str) -> String {
+        path.replace('.', "_")
     }
 
     fn to_fzf_display(&self) -> &str {
-        &self.fzf_display_path
+        &self.shortened_path
     }
 
     fn exists(&self) -> bool {
@@ -90,24 +97,19 @@ impl Project {
     }
 
     fn attach(&self) {
-        let tmux_session_name_og = self.to_fzf_display();
-        let tmux_session_name = tmux_session_name_og.replace('~', "\\~");
-
-        if !tmux::session_exists(&tmux_session_name_og)
-            && !tmux::create_session(&tmux_session_name_og, &self.expanded_path)
+        let tmux_session_name = &self.tmux_display_path;
+        if !tmux::session_exists(tmux_session_name)
+            && !tmux::create_session(tmux_session_name, &self.expanded_path)
         {
             eprintln!("Failed to create new tmux session");
             return;
         }
-
         if tmux::is_inside_tmux() {
-            if !tmux::switch_client(&tmux_session_name) {
+            if !tmux::switch_client(tmux_session_name) {
                 eprintln!("Failed to switch tmux client");
             }
-        } else {
-            if !tmux::attach_session(&tmux_session_name) {
-                eprintln!("Failed to attach to tmux session");
-            }
+        } else if !tmux::attach_session(tmux_session_name) {
+            eprintln!("Failed to attach to tmux session");
         }
     }
 }
@@ -146,7 +148,7 @@ fn generate_completion(shell: Shell) {
 
 fn get_home_path(file: &str) -> PathBuf {
     let mut file = file;
-    if file.starts_with("~") {
+    if file.starts_with('~') {
         file = file.strip_prefix("~").unwrap();
     }
     home_dir()
@@ -189,11 +191,11 @@ fn add_project(dir: Option<&str>) {
     let dir = dir.unwrap_or(&current_dir).to_string();
     let project = Project::new(&dir);
     let mut lines = read_lines(&projects_file).unwrap_or_else(|_| vec![]);
-    if !lines.contains(&project.display_path) {
-        lines.push(project.display_path.clone());
+    if !lines.contains(&project.shortened_path) {
+        lines.push(project.shortened_path.clone());
     }
     write_lines(&projects_file, &lines).unwrap();
-    println!("Added \"{}\" to .projects", project.display_path);
+    println!("Added \"{}\" to .projects", project.shortened_path);
 }
 
 fn delete_project() {
@@ -267,7 +269,7 @@ fn get_projects() -> Vec<Project> {
 
     projects
         .into_iter()
-        .filter(|project| unique_projects.insert(project.display_path.clone()))
+        .filter(|project| unique_projects.insert(project.shortened_path.clone()))
         .collect()
 }
 
@@ -276,22 +278,24 @@ fn prepare_fzf_content_from_cache(cache_file: &PathBuf, temp_file: &PathBuf) -> 
         .append(true)
         .open(temp_file)
         .expect("Failed to open temp file for appending");
-    
+
+    let current_session = tmux::get_current_session();
+
     read_lines(cache_file)
         .unwrap_or_else(|_| vec![])
         .into_iter()
         .map(|line| Project::new(&line))
         .filter(|project| {
-            tmux::get_current_session()
+            current_session
                 .as_ref()
-                .map_or(true, |session| project.to_fzf_display() != *session)
+                .is_none_or(|session| project.tmux_display_path != *session)
         })
-        .filter(|project| project.exists())
+        .filter(Project::exists)
         .scan(HashSet::new(), |seen, project| {
-            if seen.insert(project.to_fzf_display().to_string()) {
-                writeln!(&mut output_file, "{}", project.to_fzf_display())
+            if seen.insert(project.shortened_path.clone()) {
+                writeln!(output_file, "{}", project.to_fzf_display())
                     .expect("Failed to write to temp file");
-                Some(project.to_fzf_display().to_string())
+                Some(project.shortened_path.clone())
             } else {
                 None
             }
@@ -300,59 +304,93 @@ fn prepare_fzf_content_from_cache(cache_file: &PathBuf, temp_file: &PathBuf) -> 
 }
 
 fn execution() {
+    // Get the cache file path and ensure it exists
     let cache_file = get_home_path(CACHE_FILE);
     touch_file(&cache_file);
 
+    // Create a temporary file for fzf to read from
     let temp_file = NamedTempFile::new().expect("Failed to create temporary file");
     let temp_path = temp_file.path().to_path_buf();
 
+    // First, populate the temp file with cached projects
     let cache_lines = prepare_fzf_content_from_cache(&cache_file, &temp_path);
 
+    // Start fzf process
     let fzf_process = start_fzf(&temp_path);
 
+    // Keep track of what we've already added to fzf to avoid duplicates
     let mut seen_items: HashSet<String> = cache_lines.into_iter().collect();
 
-    let temp_path_clone = temp_path.clone();
+    // Clone the temp path for the background thread
+    let temp_path_clone = temp_path;
+
+    // Start a background thread to load additional projects while the user is already
+    // interacting with fzf
     thread::spawn(move || {
+        // Load all projects and filter out those that don't exist
         let projects = load_and_filter_projects();
+
+        // Prepare the content for fzf
         let additional_fzf_through = prepare_fzf_content(&projects);
 
+        // Open the temp file for appending
         let mut file = OpenOptions::new()
             .append(true)
             .open(&temp_path_clone)
             .expect("Failed to open temp file for appending");
 
+        // Add each item to the fzf list if we haven't seen it yet
         for item in additional_fzf_through {
             if seen_items.insert(item.clone()) {
-                writeln!(file, "{}", item).expect("Failed to write to temp file");
+                writeln!(file, "{item}").expect("Failed to write to temp file");
             }
         }
     });
 
+    // Wait for the user to make a selection
     let selected_str = wait_for_fzf_selection(fzf_process);
+
+    // Update the cache with the selected project
     {
         let cleanup_result = cleanup(&cache_file, &selected_str);
         if let Err(e) = cleanup_result {
-            eprintln!("Cleanup failed: {}", e);
+            eprintln!("Cleanup failed: {e}");
         }
     }
 
+    // If no selection was made, exit
     if selected_str.is_empty() {
         println!("No selection made");
         return;
     }
+
+    // Find the selected project and attach to it
     load_and_filter_projects()
         .iter()
         .find(|p| p.to_fzf_display() == selected_str)
-        .map(|project| project.attach())
+        .map(Project::attach)
         .expect("Selected project not found");
 }
+
+// Maximum number of entries to keep in the cache file
+const MAX_CACHE_ENTRIES: usize = 100;
 
 fn cleanup(cache_file: &PathBuf, selected_str: &str) -> std::io::Result<()> {
     if !selected_str.is_empty() {
         let mut cache_lines = read_lines(cache_file).unwrap_or_else(|_| vec![]);
+
+        // Remove the selected path if it already exists in the cache
         cache_lines.retain(|line| line != selected_str);
+
+        // Add the selected path to the beginning of the cache
         cache_lines.insert(0, selected_str.to_string());
+
+        // Limit the cache size to prevent it from growing too large
+        if cache_lines.len() > MAX_CACHE_ENTRIES {
+            cache_lines.truncate(MAX_CACHE_ENTRIES);
+        }
+
+        // Write the updated cache back to the file
         write_lines(cache_file, &cache_lines)?;
     }
     Ok(())
@@ -372,8 +410,7 @@ fn start_fzf(temp_file: &PathBuf) -> std::process::Child {
 }
 
 fn load_and_filter_projects() -> Vec<Project> {
-    let projects = get_projects().filter_exists();
-    projects
+    get_projects().filter_exists()
 }
 
 fn prepare_fzf_content(projects: &[Project]) -> Vec<String> {
@@ -385,12 +422,12 @@ fn prepare_fzf_content(projects: &[Project]) -> Vec<String> {
         let display = project.to_fzf_display();
 
         if let Some(current_session) = &current_session {
-            if &display == current_session {
+            if project.tmux_display_path == *current_session {
                 continue;
             }
         }
 
-        if seen.insert(display) {
+        if seen.insert(display.to_string()) {
             fzf_through.push(display.to_string());
         }
     }
@@ -408,7 +445,7 @@ fn wait_for_fzf_selection(fzf_process: std::process::Child) -> String {
 fn list_projects() {
     let projects = get_projects();
     for project in projects {
-        println!("{}", project.display_path);
+        println!("{}", project.shortened_path);
     }
 }
 

@@ -1,6 +1,6 @@
 pkgname=jumper
-pkgver=1.3.0
-pkgrel=4
+pkgver=1.4.0
+pkgrel=1
 pkgdesc="tmux jumper, fzf through a list of projects"
 arch=('x86_64' 'aarch64')
 url="https://github.com/fibalious/jumper"
