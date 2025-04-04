@@ -15,6 +15,8 @@ extern crate whoami;
 
 const PROJECTS_FILE: &str = ".projects";
 const CACHE_FILE: &str = ".projects_cache";
+const FZF_LAYOUT: &str = "--layout=reverse --no-border --cycle --extended";
+const MAX_CACHE_ENTRIES: usize = 100;
 
 #[derive(Debug, Parser)]
 #[command(name = "Jumper", about = "fzf through a list of projects")]
@@ -43,6 +45,9 @@ enum Commands {
     /// Set or remove depth for a project
     #[command(name = "set-depth", aliases = &["depth", "sd"])]
     SetDepth,
+    /// Edit the .projects file in your default editor
+    #[command(name = "edit", aliases = &["e"])]
+    Edit,
     /// Generate shell completion scripts
     #[command(name = "completion", aliases = &["comp", "c"])]
     Completion {
@@ -135,6 +140,7 @@ fn main() {
         Some(Commands::List) => list_projects(),
         Some(Commands::Status) => status_projects(),
         Some(Commands::SetDepth) => set_depth(),
+        Some(Commands::Edit) => edit_projects_file(),
         Some(Commands::Completion { shell }) => generate_completion(shell),
         None => execution(),
     }
@@ -202,7 +208,7 @@ fn delete_project() {
     let projects_file = get_home_path(PROJECTS_FILE);
     let lines = read_lines(&projects_file).unwrap_or_else(|_| vec![]);
     let mut selected = Command::new("fzf")
-        .arg("--reverse")
+        .args(FZF_LAYOUT.split_whitespace())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .spawn()
@@ -247,9 +253,12 @@ fn get_projects() -> Vec<Project> {
                 let dir = captures.get(1).unwrap().as_str();
                 let depth = captures.get(2).unwrap().as_str().parse::<u32>().unwrap();
                 projects.push(Project::new(dir));
+                
+                // Use the expanded path for the find command to ensure it works correctly
+                let project = Project::new(dir);
                 let sub_dirs = Command::new("find")
                     .arg("-L")
-                    .arg(dir)
+                    .arg(&project.expanded_path)
                     .arg("-maxdepth")
                     .arg(depth.to_string())
                     .arg("-type")
@@ -269,10 +278,10 @@ fn get_projects() -> Vec<Project> {
     // Add tmux sessions to the projects list
     projects.extend(get_tmux_sessions());
 
-    // Filter out duplicates
+    // Filter out duplicates based on expanded path to handle both shortened and expanded paths
     projects
         .into_iter()
-        .filter(|project| unique_projects.insert(project.shortened_path.clone()))
+        .filter(|project| unique_projects.insert(project.expanded_path.clone()))
         .collect()
 }
 
@@ -295,7 +304,8 @@ fn prepare_fzf_content_from_cache(cache_file: &PathBuf, temp_file: &PathBuf) -> 
         })
         .filter(Project::exists)
         .scan(HashSet::new(), |seen, project| {
-            if seen.insert(project.shortened_path.clone()) {
+            // Use expanded path for deduplication to handle both shortened and expanded paths
+            if seen.insert(project.expanded_path.clone()) {
                 writeln!(output_file, "{}", project.to_fzf_display())
                     .expect("Failed to write to temp file");
                 Some(project.shortened_path.clone())
@@ -368,15 +378,15 @@ fn execution() {
     }
 
     // Find the selected project and attach to it
+    // Create a Project from the selected string to handle both shortened and expanded paths
+    let selected_project = Project::new(&selected_str);
+    
     load_and_filter_projects()
         .iter()
-        .find(|p| p.to_fzf_display() == selected_str)
+        .find(|p| p.expanded_path == selected_project.expanded_path)
         .map(Project::attach)
         .expect("Selected project not found");
 }
-
-// Maximum number of entries to keep in the cache file
-const MAX_CACHE_ENTRIES: usize = 100;
 
 fn cleanup(cache_file: &PathBuf, selected_str: &str) -> std::io::Result<()> {
     if !selected_str.is_empty() {
@@ -403,8 +413,9 @@ fn start_fzf(temp_file: &PathBuf) -> std::process::Child {
     Command::new("sh")
         .arg("-c")
         .arg(format!(
-            "tail -f -n +0 {} | fzf --layout=reverse --no-border --cycle --extended",
-            temp_file.display()
+            "tail -f -n +0 {} | fzf {}",
+            temp_file.display(),
+            FZF_LAYOUT
         ))
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -430,7 +441,8 @@ fn prepare_fzf_content(projects: &[Project]) -> Vec<String> {
             }
         }
 
-        if seen.insert(display.to_string()) {
+        // Use expanded path for deduplication to handle both shortened and expanded paths
+        if seen.insert(project.expanded_path.clone()) {
             fzf_through.push(display.to_string());
         }
     }
@@ -464,7 +476,7 @@ fn set_depth() {
     let projects_file = get_home_path(PROJECTS_FILE);
     let lines = read_lines(&projects_file).unwrap_or_else(|_| vec![]);
     let mut selected = Command::new("fzf")
-        .arg("--reverse")
+        .args(FZF_LAYOUT.split_whitespace())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .spawn()
@@ -499,5 +511,24 @@ fn set_depth() {
         new_lines.sort();
         write_lines(&projects_file, &new_lines).unwrap();
         println!("Set depth for \"{selected_str}\" to {depth_input}");
+    }
+}
+
+/// Edit the .projects file in the default editor
+fn edit_projects_file() {
+    let projects_file = get_home_path(PROJECTS_FILE);
+    touch_file(&projects_file);
+    
+    // Get the editor from environment variable or use a default
+    let editor = env::var("EDITOR").unwrap_or_else(|_| "vi".to_string());
+    
+    // Launch the editor with the projects file
+    let status = Command::new(editor)
+        .arg(projects_file)
+        .status()
+        .expect("Failed to launch editor");
+    
+    if !status.success() {
+        eprintln!("Editor exited with non-zero status: {}", status);
     }
 }
