@@ -7,6 +7,10 @@ pub fn is_inside_tmux() -> bool {
     env::var("TMUX").is_ok()
 }
 
+/// Gets a list of all tmux sessions.
+///
+/// # Panics
+/// Panics if the `tmux list-sessions` command fails to execute.
 #[must_use]
 pub fn get_sessions() -> Vec<String> {
     let output = Command::new("tmux")
@@ -27,6 +31,10 @@ pub fn get_sessions() -> Vec<String> {
     }
 }
 
+/// Checks if a tmux session with the given name exists.
+///
+/// # Panics
+/// Panics if the `tmux list-sessions` command fails to execute.
 #[must_use]
 pub fn session_exists(session_name: &str) -> bool {
     let output = Command::new("tmux")
@@ -40,6 +48,12 @@ pub fn session_exists(session_name: &str) -> bool {
         .any(|line| line.starts_with(&format!("{session_name}:")))
 }
 
+/// Creates a new tmux session with the given name in the specified directory.
+///
+/// # Panics
+/// Panics if:
+/// - The directory change fails
+/// - The `tmux new-session` command fails to execute
 #[must_use]
 pub fn create_session(session_name: &str, dir: &str) -> bool {
     env::set_current_dir(Path::new(dir))
@@ -54,6 +68,10 @@ pub fn create_session(session_name: &str, dir: &str) -> bool {
         .success()
 }
 
+/// Switches the current tmux client to the specified session.
+///
+/// # Panics
+/// Panics if the `tmux switch-client` command fails to execute.
 #[must_use]
 pub fn switch_client(session_name: &str) -> bool {
     Command::new("tmux")
@@ -65,6 +83,10 @@ pub fn switch_client(session_name: &str) -> bool {
         .success()
 }
 
+/// Attaches to the specified tmux session.
+///
+/// # Panics
+/// Panics if the `tmux attach-session` command fails to execute.
 #[must_use]
 pub fn attach_session(session_name: &str) -> bool {
     Command::new("tmux")
@@ -77,6 +99,10 @@ pub fn attach_session(session_name: &str) -> bool {
         .success()
 }
 
+/// Gets the name of the current tmux session.
+///
+/// # Panics
+/// Panics if the `tmux display-message` command fails to execute.
 #[must_use]
 pub fn get_current_session() -> Option<String> {
     let output = Command::new("tmux")
