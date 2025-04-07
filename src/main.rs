@@ -65,10 +65,16 @@ struct Project {
 
 impl Project {
     fn new(path: &str) -> Self {
-        let shortened_path = path.to_string();
-        let expanded_path = shellexpand::tilde(&shortened_path).to_string();
-        let shortened_path = Self::shorten_path(&expanded_path);
-        let tmux_display_path = Self::format_for_tmux(&shortened_path);
+        let expanded_path = shellexpand::tilde(&path)
+            .to_string()
+            .trim_end_matches('/')
+            .to_string();
+        let shortened_path = Self::shorten_path(&expanded_path)
+            .trim_end_matches('/')
+            .to_string();
+        let tmux_display_path = Self::format_for_tmux(&shortened_path)
+            .trim_end_matches('/')
+            .to_string();
 
         Self {
             shortened_path,
@@ -103,14 +109,24 @@ impl Project {
 
     fn attach(&self) {
         let tmux_session_name = &self.tmux_display_path;
-        if !tmux::session_exists(tmux_session_name)
-            && !tmux::create_session(tmux_session_name, &self.expanded_path)
-        {
-            eprintln!("Failed to create new tmux session");
-            return;
+        
+        let session_exists = tmux::session_exists(tmux_session_name);
+        
+        if !session_exists {
+            if !tmux::create_session(tmux_session_name, &self.expanded_path) {
+                eprintln!("Failed to create new tmux session");
+                return;
+            }
         }
+        
         if tmux::is_inside_tmux() {
-            if !tmux::switch_client(tmux_session_name) {
+            let escaped_name = if tmux_session_name == "~" {
+                "\\~".to_string()
+            } else {
+                tmux_session_name.to_string()
+            };
+            
+            if !tmux::switch_client(&escaped_name) {
                 eprintln!("Failed to switch tmux client");
             }
         } else if !tmux::attach_session(tmux_session_name) {
@@ -244,8 +260,6 @@ fn get_projects() -> Vec<Project> {
     let projects_file = get_home_path(PROJECTS_FILE);
     let mut projects = Vec::new();
     let mut unique_projects = HashSet::new();
-
-    // Load projects from the .projects file
     if let Ok(lines) = read_lines(&projects_file) {
         let re = Regex::new(r"(.*) --depth (\d+)").unwrap();
         for line in lines {
@@ -253,8 +267,6 @@ fn get_projects() -> Vec<Project> {
                 let dir = captures.get(1).unwrap().as_str();
                 let depth = captures.get(2).unwrap().as_str().parse::<u32>().unwrap();
                 projects.push(Project::new(dir));
-                
-                // Use the expanded path for the find command to ensure it works correctly
                 let project = Project::new(dir);
                 let sub_dirs = Command::new("find")
                     .arg("-L")
@@ -274,11 +286,7 @@ fn get_projects() -> Vec<Project> {
             }
         }
     }
-
-    // Add tmux sessions to the projects list
     projects.extend(get_tmux_sessions());
-
-    // Filter out duplicates based on expanded path to handle both shortened and expanded paths
     projects
         .into_iter()
         .filter(|project| unique_projects.insert(project.expanded_path.clone()))
@@ -290,9 +298,7 @@ fn prepare_fzf_content_from_cache(cache_file: &PathBuf, temp_file: &PathBuf) -> 
         .append(true)
         .open(temp_file)
         .expect("Failed to open temp file for appending");
-
     let current_session = tmux::get_current_session();
-
     read_lines(cache_file)
         .unwrap_or_else(|_| vec![])
         .into_iter()
@@ -304,7 +310,6 @@ fn prepare_fzf_content_from_cache(cache_file: &PathBuf, temp_file: &PathBuf) -> 
         })
         .filter(Project::exists)
         .scan(HashSet::new(), |seen, project| {
-            // Use expanded path for deduplication to handle both shortened and expanded paths
             if seen.insert(project.expanded_path.clone()) {
                 writeln!(output_file, "{}", project.to_fzf_display())
                     .expect("Failed to write to temp file");
@@ -317,93 +322,54 @@ fn prepare_fzf_content_from_cache(cache_file: &PathBuf, temp_file: &PathBuf) -> 
 }
 
 fn execution() {
-    // Get the cache file path and ensure it exists
     let cache_file = get_home_path(CACHE_FILE);
     touch_file(&cache_file);
-
-    // Create a temporary file for fzf to read from
     let temp_file = NamedTempFile::new().expect("Failed to create temporary file");
     let temp_path = temp_file.path().to_path_buf();
-
-    // First, populate the temp file with cached projects
     let cache_lines = prepare_fzf_content_from_cache(&cache_file, &temp_path);
-
-    // Start fzf process
     let fzf_process = start_fzf(&temp_path);
-
-    // Keep track of what we've already added to fzf to avoid duplicates
     let mut seen_items: HashSet<String> = cache_lines.into_iter().collect();
-
-    // Clone the temp path for the background thread
     let temp_path_clone = temp_path;
-
-    // Start a background thread to load additional projects while the user is already
-    // interacting with fzf
     thread::spawn(move || {
-        // Load all projects and filter out those that don't exist
         let projects = load_and_filter_projects();
-
-        // Prepare the content for fzf
         let additional_fzf_through = prepare_fzf_content(&projects);
-
-        // Open the temp file for appending
         let mut file = OpenOptions::new()
             .append(true)
             .open(&temp_path_clone)
             .expect("Failed to open temp file for appending");
-
-        // Add each item to the fzf list if we haven't seen it yet
         for item in additional_fzf_through {
             if seen_items.insert(item.clone()) {
                 writeln!(file, "{item}").expect("Failed to write to temp file");
             }
         }
     });
-
-    // Wait for the user to make a selection
     let selected_str = wait_for_fzf_selection(fzf_process);
-
-    // Update the cache with the selected project
     {
         let cleanup_result = cleanup(&cache_file, &selected_str);
         if let Err(e) = cleanup_result {
             eprintln!("Cleanup failed: {e}");
         }
     }
-
-    // If no selection was made, exit
     if selected_str.is_empty() {
         println!("No selection made");
         return;
     }
-
-    // Find the selected project and attach to it
-    // Create a Project from the selected string to handle both shortened and expanded paths
     let selected_project = Project::new(&selected_str);
-    
     load_and_filter_projects()
         .iter()
         .find(|p| p.expanded_path == selected_project.expanded_path)
-        .map(Project::attach)
+        .map(|p| p.attach())
         .expect("Selected project not found");
 }
 
 fn cleanup(cache_file: &PathBuf, selected_str: &str) -> std::io::Result<()> {
     if !selected_str.is_empty() {
         let mut cache_lines = read_lines(cache_file).unwrap_or_else(|_| vec![]);
-
-        // Remove the selected path if it already exists in the cache
         cache_lines.retain(|line| line != selected_str);
-
-        // Add the selected path to the beginning of the cache
         cache_lines.insert(0, selected_str.to_string());
-
-        // Limit the cache size to prevent it from growing too large
         if cache_lines.len() > MAX_CACHE_ENTRIES {
             cache_lines.truncate(MAX_CACHE_ENTRIES);
         }
-
-        // Write the updated cache back to the file
         write_lines(cache_file, &cache_lines)?;
     }
     Ok(())
@@ -431,22 +397,17 @@ fn prepare_fzf_content(projects: &[Project]) -> Vec<String> {
     let current_session = tmux::get_current_session();
     let mut fzf_through: Vec<String> = Vec::new();
     let mut seen = HashSet::new();
-
     for project in projects {
         let display = project.to_fzf_display();
-
         if let Some(current_session) = &current_session {
             if project.tmux_display_path == *current_session {
                 continue;
             }
         }
-
-        // Use expanded path for deduplication to handle both shortened and expanded paths
         if seen.insert(project.expanded_path.clone()) {
             fzf_through.push(display.to_string());
         }
     }
-
     fzf_through
 }
 
@@ -514,20 +475,14 @@ fn set_depth() {
     }
 }
 
-/// Edit the .projects file in the default editor
 fn edit_projects_file() {
     let projects_file = get_home_path(PROJECTS_FILE);
     touch_file(&projects_file);
-    
-    // Get the editor from environment variable or use a default
     let editor = env::var("EDITOR").unwrap_or_else(|_| "vi".to_string());
-    
-    // Launch the editor with the projects file
     let status = Command::new(editor)
         .arg(projects_file)
         .status()
         .expect("Failed to launch editor");
-    
     if !status.success() {
         eprintln!("Editor exited with non-zero status: {}", status);
     }
