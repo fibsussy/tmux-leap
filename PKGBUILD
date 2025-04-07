@@ -1,13 +1,13 @@
-pkgname=jumper
+pkgname=leap
 pkgver=1.5.1
 pkgrel=1
-pkgdesc="tmux jumper, fzf through a list of projects"
+pkgdesc="tmux leaper, fzf through a list of projects"
 arch=('x86_64' 'aarch64')
-url="https://github.com/fibalious/jumper"
+url="https://github.com/fibsussy/leap"
 license=('MIT')
 depends=('fzf' 'tmux')
 makedepends=('rust' 'cargo')
-source=("$pkgname-$pkgver.tar.gz::https://github.com/fibalious/jumper/archive/v$pkgver.tar.gz")
+source=("$pkgname-$pkgver.tar.gz::https://github.com/fibsussy/leap/archive/v$pkgver.tar.gz")
 sha256sums=('SKIP')
 options=('!debug')  # Explicitly disable debug package generation
 
@@ -20,12 +20,12 @@ package() {
     cd "$srcdir/$pkgname-$pkgver"
 
     # Install the binary
-    install -Dm755 "target/release/jumper" "$pkgdir/usr/bin/jumper"
+    install -Dm755 "target/release/leap" "$pkgdir/usr/bin/leap"
 
     # Dynamically generate completion scripts
     mkdir -p "$pkgdir/usr/share/bash-completion/completions"
     mkdir -p "$pkgdir/usr/share/zsh/site-functions"
 
-    ./target/release/jumper completion bash > "$pkgdir/usr/share/bash-completion/completions/jumper"
-    ./target/release/jumper completion zsh > "$pkgdir/usr/share/zsh/site-functions/_jumper"
+    ./target/release/leap completion bash > "$pkgdir/usr/share/bash-completion/completions/leap"
+    ./target/release/leap completion zsh > "$pkgdir/usr/share/zsh/site-functions/_leap"
 }

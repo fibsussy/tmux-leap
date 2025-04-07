@@ -1,5 +1,5 @@
 [package]
-name = "jumper"
+name = "leap"
 version = "1.5.1"
 description = "creates and jumps through tmux sessions via fzf"
 edition = "2021"

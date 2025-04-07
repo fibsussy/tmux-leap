@@ -19,7 +19,7 @@ const FZF_LAYOUT: &str = "--layout=reverse --no-border --cycle --extended";
 const MAX_CACHE_ENTRIES: usize = 100;
 
 #[derive(Debug, Parser)]
-#[command(name = "Jumper", about = "fzf through a list of projects")]
+#[command(name = "Leap", about = "fzf through a list of directories")]
 struct Opt {
     #[command(subcommand)]
     command: Option<Commands>,
