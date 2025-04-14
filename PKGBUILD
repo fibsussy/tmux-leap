@@ -1,13 +1,13 @@
-pkgname=leap
-pkgver=1.5.1
+pkgname=tmux-leap
+pkgver=1.6.0
 pkgrel=1
-pkgdesc="tmux leaper, fzf through a list of projects"
+pkgdesc="tmux leaper, fzf through a list of projects or directories, autosessionizing, history"
 arch=('x86_64' 'aarch64')
-url="https://github.com/fibsussy/leap"
+url="https://github.com/fibsussy/tmux-leap"
 license=('MIT')
 depends=('fzf' 'tmux')
 makedepends=('rust' 'cargo')
-source=("$pkgname-$pkgver.tar.gz::https://github.com/fibsussy/leap/archive/v$pkgver.tar.gz")
+source=("$pkgname-$pkgver.tar.gz::https://github.com/fibsussy/tmux-leap/archive/v$pkgver.tar.gz")
 sha256sums=('SKIP')
 options=('!debug')  # Explicitly disable debug package generation
 
@@ -20,12 +20,12 @@ package() {
     cd "$srcdir/$pkgname-$pkgver"
 
     # Install the binary
-    install -Dm755 "target/release/leap" "$pkgdir/usr/bin/leap"
+    install -Dm755 "target/release/tmux-leap" "$pkgdir/usr/bin/tmux-leap"
 
     # Dynamically generate completion scripts
     mkdir -p "$pkgdir/usr/share/bash-completion/completions"
     mkdir -p "$pkgdir/usr/share/zsh/site-functions"
 
-    ./target/release/leap completion bash > "$pkgdir/usr/share/bash-completion/completions/leap"
-    ./target/release/leap completion zsh > "$pkgdir/usr/share/zsh/site-functions/_leap"
+    ./target/release/tmux-leap completion bash > "$pkgdir/usr/share/bash-completion/completions/tmux-leap"
+    ./target/release/tmux-leap completion zsh > "$pkgdir/usr/share/zsh/site-functions/_tmux-leap"
 }
