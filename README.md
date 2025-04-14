@@ -4,6 +4,10 @@
 
 tmux-leap is a powerful CLI tool that lets you instantly navigate between tmux sessions using fuzzy search. Stop wasting time typing long session names or scrolling through lists - just leap to where you need to be!
 
+https://github.com/user-attachments/assets/01e607aa-56d2-46d8-bdd6-a11fb734c2e5
+
+
+
 ## ✨ Features
 
 - **Blazing Fast Navigation**: Instantly jump between tmux sessions with fuzzy search
