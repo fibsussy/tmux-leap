@@ -32,6 +32,10 @@ enum Commands {
     Add {
         /// The project directory to add. If not provided, the current directory will be added.
         dir: Option<String>,
+        
+        /// Set a recursive depth for subdirectories
+        #[arg(long)]
+        depth: Option<u32>,
     },
     /// Delete a project from the .projects file
     #[command(name = "delete", aliases = &["del", "d"])]
@@ -151,7 +155,7 @@ impl FilterExists for Vec<Project> {
 fn main() {
     let opt = Opt::parse();
     match opt.command {
-        Some(Commands::Add { dir }) => add_project(dir.as_deref()),
+        Some(Commands::Add { dir, depth }) => add_project(dir.as_deref(), depth),
         Some(Commands::Delete) => delete_project(),
         Some(Commands::List) => list_projects(),
         Some(Commands::Status) => status_projects(),
@@ -206,18 +210,35 @@ where
     Ok(())
 }
 
-fn add_project(dir: Option<&str>) {
+fn add_project(dir: Option<&str>, depth: Option<u32>) {
     let projects_file = get_home_path(PROJECTS_FILE);
     touch_file(&projects_file);
     let current_dir = env::current_dir().unwrap().to_str().unwrap().to_string();
     let dir = dir.unwrap_or(&current_dir).to_string();
     let project = Project::new(&dir);
     let mut lines = read_lines(&projects_file).unwrap_or_else(|_| vec![]);
-    if !lines.contains(&project.shortened_path) {
+    
+    // Remove any existing entry for this path
+    lines.retain(|line| {
+        let re = Regex::new(r"(.*) --depth \d+").unwrap();
+        if let Some(captures) = re.captures(line) {
+            let path = captures.get(1).unwrap().as_str();
+            path != project.shortened_path
+        } else {
+            line != &project.shortened_path
+        }
+    });
+    
+    // Add the path with depth if specified
+    if let Some(depth_value) = depth {
+        lines.push(format!("{} --depth {}", project.shortened_path, depth_value));
+        println!("Added \"{}\" to .projects with depth {}", project.shortened_path, depth_value);
+    } else {
         lines.push(project.shortened_path.clone());
+        println!("Added \"{}\" to .projects", project.shortened_path);
     }
+    
     write_lines(&projects_file, &lines).unwrap();
-    println!("Added \"{}\" to .projects", project.shortened_path);
 }
 
 fn delete_project() {
