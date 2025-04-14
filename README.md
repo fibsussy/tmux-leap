@@ -38,49 +38,27 @@ sudo cp target/release/tmux-leap /usr/local/bin/
 ### Basic Usage
 
 Simply run `tmux-leap` to see a fuzzy finder with all your available sessions and projects:
-
 ```bash
 tmux-leap
 ```
 
-### Adding Projects
-
-Add your current directory to the projects list:
-
-```bash
-tmux-leap add
-```
-
-Or specify a directory:
-
-```bash
-tmux-leap add ~/projects/awesome-project
-```
-
 ### Managing Projects
 
-List all your projects:
-
+Add directories to your projects list:
 ```bash
-tmux-leap list
+tmux-leap add                                    # adds current directory
+tmux-leap add ~/projects/awesome-project         # adds specific directory
+tmux-leap add ~/projects/awesome-project --depth 2  # includes subdirectories
 ```
 
-Delete a project (interactive):
-
+View and manage your projects:
 ```bash
-tmux-leap delete
+tmux-leap list    # view all projects
+tmux-leap delete  # remove a project (interactive)
+tmux-leap edit    # edit projects file directly in $EDITOR
 ```
 
-Edit your projects file directly:
-
-```bash
-tmux-leap edit
-```
-
-### Advanced Features
-
-Set a depth to recursively include subdirectories:
-
+Interactively chooses a project to set the depth to recursively include subdirectories:
 ```bash
 tmux-leap set-depth
 ```
@@ -115,23 +93,32 @@ Your projects are stored in `~/.projects` with a simple format:
 
 ```
 ~/projects/awesome-project
-~/work/client-project --depth 2
 ~/personal/blog
+~/Downloads
+     etc...
 ```
 
 The `--depth` option allows you to include subdirectories up to the specified depth.
+
+```
+~/work/client-project --depth 2
+~ --depth 1
+~/.config --depth 1
+~/projects --depth 1
+     etc...
+```
 
 ## 📚 Command Reference
 
 | Command | Description |
 |---------|-------------|
 | `tmux-leap` | Main command - shows fuzzy finder |
-| `tmux-leap add [dir]` | Add current or specified directory |
+| `tmux-leap add [dir] [--depth N]` | Add current or specified directory with optional depth |
 | `tmux-leap delete` | Remove a project (interactive) |
 | `tmux-leap list` | List all projects |
 | `tmux-leap status` | Show raw projects file content |
-| `tmux-leap set-depth` | Set recursive depth for a project |
-| `tmux-leap edit` | Edit projects file in your default editor |
+| `tmux-leap set-depth` | Set recursive depth for a project (interactive) |
+| `tmux-leap edit` | Edit projects file in your default editor $EDITOR |
 | `tmux-leap completion <shell>` | Generate shell completions |
 
 ## 🤝 Contributing
@@ -140,4 +127,4 @@ Contributions are welcome! Feel free to open issues or submit pull requests.
 
 ## 📄 License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
