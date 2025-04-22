@@ -415,16 +415,10 @@ fn load_and_filter_projects() -> Vec<Project> {
 }
 
 fn prepare_fzf_content(projects: &[Project]) -> Vec<String> {
-    let current_session = tmux::get_current_session();
     let mut fzf_through: Vec<String> = Vec::new();
     let mut seen = HashSet::new();
     for project in projects {
         let display = project.to_fzf_display();
-        if let Some(current_session) = &current_session {
-            if project.tmux_display_path == *current_session {
-                continue;
-            }
-        }
         if seen.insert(project.expanded_path.clone()) {
             fzf_through.push(display.to_string());
         }
