@@ -19,11 +19,12 @@ https://github.com/user-attachments/assets/01e607aa-56d2-46d8-bdd6-a11fb734c2e5
 
 ## 🔧 Installation
 
-### Arch Linux
+### One-line Install
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/fibsussy/tmux-leap/refs/heads/main/arch_install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/fibsussy/tmux-leap/main/install.sh | bash
 ```
+**Note:** For security, inspect the install script before running it. View it [here](https://github.com/fibsussy/tmux-leap/blob/main/install.sh).
 
 ### Manual Installation (from source)
 
