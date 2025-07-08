@@ -1,6 +1,6 @@
 [package]
 name = "tmux-leap"
-version = "1.8.1"
+version = "1.8.2"
 description = "creates and jumps through tmux sessions via fzf"
 edition = "2021"
 license = "MIT"
