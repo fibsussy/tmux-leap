@@ -1,5 +1,5 @@
 pkgname=tmux-leap
-pkgver=1.8.2
+pkgver=1.8.3
 pkgrel=1
 pkgdesc="tmux leaper, fzf through a list of projects or directories, autosessionizing, history"
 arch=('x86_64' 'aarch64')
