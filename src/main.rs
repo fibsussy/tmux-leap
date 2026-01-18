@@ -528,5 +528,21 @@ fn goto_project(dir: &str) {
         return;
     }
 
-    project.attach();
+    if tmux::is_inside_tmux() {
+        // Inside tmux: just switch/attach normally
+        project.attach();
+    } else {
+        // Outside tmux: ensure session exists, then attach using exec to persist
+        let tmux_session_name = &project.tmux_display_path;
+
+        if !tmux::session_exists(tmux_session_name) {
+            if !tmux::create_session(tmux_session_name, &project.expanded_path) {
+                eprintln!("Failed to create new tmux session");
+                return;
+            }
+        }
+
+        // Replace current process with tmux attach (this persists)
+        tmux::attach_session_exec(tmux_session_name);
+    }
 }

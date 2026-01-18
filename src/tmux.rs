@@ -119,3 +119,25 @@ pub fn get_current_session() -> Option<String> {
         None
     }
 }
+
+/// Attaches to the specified tmux session, replacing the current process.
+/// This is used when running from outside tmux and you want the process to persist.
+///
+/// # Panics
+/// Panics if the `exec` call fails or the tmux command is not found.
+pub fn attach_session_exec(session_name: &str) -> ! {
+    use std::os::unix::process::CommandExt;
+
+    let mut command = std::process::Command::new("tmux");
+    command
+        .arg("attach-session")
+        .arg("-t")
+        .arg(session_name)
+        .env_remove("TMUX");
+
+    // Replace the current process with tmux
+    let result = command.exec();
+    // exec replaces the process, so this never runs unless exec fails
+    eprintln!("Failed to attach to tmux session: {}", result);
+    std::process::exit(1);
+}
