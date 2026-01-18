@@ -1,3 +1,5 @@
+# Maintainer: fibsussy <noahlykins@gmail.com>
+# Local build - builds from current directory without network requests
 pkgname=tmux-leap
 pkgver=1.8.3
 pkgrel=1
@@ -6,16 +8,33 @@ arch=('x86_64' 'aarch64')
 url="https://github.com/fibsussy/tmux-leap"
 license=('MIT')
 depends=('fzf' 'tmux')
-makedepends=('curl')
-source=("https://github.com/fibsussy/tmux-leap/releases/download/v${pkgver}/tmux-leap-linux-${CARCH}.tar.gz"
-        "https://raw.githubusercontent.com/fibsussy/tmux-leap/main/LICENSE")
-sha256sums=('SKIP'
-            'SKIP')
+makedepends=('rust' 'cargo')
 options=('!debug')
+install=$pkgname.install
+
+source=()
+sha256sums=()
+
+build() {
+    cd "$startdir"
+    cargo build --release --locked
+}
 
 package() {
-    install -Dm755 "tmux-leap" "$pkgdir/usr/bin/tmux-leap"
+    cd "$startdir"
+
+    # Install compiled binary
+    install -Dm755 "target/release/$pkgname" "$pkgdir/usr/bin/$pkgname"
+
+    # Install license
     install -Dm644 "LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
-    install -Dm644 <(./tmux-leap completion bash) "$pkgdir/usr/share/bash-completion/completions/tmux-leap"
-    install -Dm644 <(./tmux-leap completion zsh) "$pkgdir/usr/share/zsh/site-functions/_tmux-leap"
+
+    # Generate and install shell completions for main binary
+    install -dm755 "$pkgdir/usr/share/bash-completion/completions"
+    install -dm755 "$pkgdir/usr/share/zsh/site-functions"
+    install -dm755 "$pkgdir/usr/share/fish/vendor_completions.d"
+
+    "$pkgdir/usr/bin/$pkgname" completion bash > "$pkgdir/usr/share/bash-completion/completions/$pkgname"
+    "$pkgdir/usr/bin/$pkgname" completion zsh > "$pkgdir/usr/share/zsh/site-functions/_$pkgname"
+    "$pkgdir/usr/bin/$pkgname" completion fish > "$pkgdir/usr/share/fish/vendor_completions.d/$pkgname.fish"
 }
