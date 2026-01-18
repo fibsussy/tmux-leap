@@ -543,6 +543,6 @@ fn goto_project(dir: &str) {
         }
 
         // Replace current process with tmux attach (this persists)
-        tmux::attach_session_exec(tmux_session_name);
+        tmux::attach_session_exec(tmux_session_name, &project.expanded_path);
     }
 }
