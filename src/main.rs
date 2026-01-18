@@ -32,7 +32,7 @@ enum Commands {
     Add {
         /// The project directory to add. If not provided, the current directory will be added.
         dir: Option<String>,
-        
+
         /// Set a recursive depth for subdirectories
         #[arg(long)]
         depth: Option<u32>,
@@ -52,6 +52,12 @@ enum Commands {
     /// Edit the .projects file in your default editor
     #[command(name = "edit", aliases = &["e"])]
     Edit,
+    /// Go directly to a project path
+    #[command(name = "goto", aliases = &["g"])]
+    Goto {
+        /// The project directory to go to
+        dir: String,
+    },
     /// Generate shell completion scripts
     #[command(name = "completion", aliases = &["comp", "c"])]
     Completion {
@@ -113,23 +119,23 @@ impl Project {
 
     fn attach(&self) {
         let tmux_session_name = &self.tmux_display_path;
-        
+
         let session_exists = tmux::session_exists(tmux_session_name);
-        
+
         if !session_exists {
             if !tmux::create_session(tmux_session_name, &self.expanded_path) {
                 eprintln!("Failed to create new tmux session");
                 return;
             }
         }
-        
+
         if tmux::is_inside_tmux() {
             let escaped_name = if tmux_session_name == "~" {
                 "\\~".to_string()
             } else {
                 tmux_session_name.to_string()
             };
-            
+
             if !tmux::switch_client(&escaped_name) {
                 eprintln!("Failed to switch tmux client");
             }
@@ -161,6 +167,7 @@ fn main() {
         Some(Commands::Status) => status_projects(),
         Some(Commands::SetDepth) => set_depth(),
         Some(Commands::Edit) => edit_projects_file(),
+        Some(Commands::Goto { dir }) => goto_project(&dir),
         Some(Commands::Completion { shell }) => generate_completion(shell),
         None => execution(),
     }
@@ -217,7 +224,7 @@ fn add_project(dir: Option<&str>, depth: Option<u32>) {
     let dir = dir.unwrap_or(&current_dir).to_string();
     let project = Project::new(&dir);
     let mut lines = read_lines(&projects_file).unwrap_or_else(|_| vec![]);
-    
+
     // Remove any existing entry for this path
     lines.retain(|line| {
         let re = Regex::new(r"(.*) --depth \d+").unwrap();
@@ -228,16 +235,22 @@ fn add_project(dir: Option<&str>, depth: Option<u32>) {
             line != &project.shortened_path
         }
     });
-    
+
     // Add the path with depth if specified
     if let Some(depth_value) = depth {
-        lines.push(format!("{} --depth {}", project.shortened_path, depth_value));
-        println!("Added \"{}\" to .projects with depth {}", project.shortened_path, depth_value);
+        lines.push(format!(
+            "{} --depth {}",
+            project.shortened_path, depth_value
+        ));
+        println!(
+            "Added \"{}\" to .projects with depth {}",
+            project.shortened_path, depth_value
+        );
     } else {
         lines.push(project.shortened_path.clone());
         println!("Added \"{}\" to .projects", project.shortened_path);
     }
-    
+
     write_lines(&projects_file, &lines).unwrap();
 }
 
@@ -501,4 +514,19 @@ fn edit_projects_file() {
     if !status.success() {
         eprintln!("Editor exited with non-zero status: {}", status);
     }
+}
+
+fn goto_project(dir: &str) {
+    let project = Project::new(dir);
+
+    // Check if the directory exists
+    if !project.exists() {
+        eprintln!(
+            "Directory \"{}\" does not exist or is not a directory",
+            project.expanded_path
+        );
+        return;
+    }
+
+    project.attach();
 }
