@@ -7,7 +7,7 @@ on:
 jobs:
   # Calculate version bump (don't commit yet)
   version:
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     outputs:
       new_version: ${{ steps.bump.outputs.new_version }}
     steps:
@@ -41,7 +41,8 @@ jobs:
       - name: Bump PKGBUILD versions
         run: |
           sed -i "s/pkgver=.*/pkgver=${{ steps.bump.outputs.new_version }}/" PKGBUILD
-          sed -i "s/pkgver=.*/pkgver=${{ steps.bump.outputs.new_version }}/" PKGBUILD.bin
+          sed -i "s/pkgver=.*/pkgver=${{ steps.bump.outputs.new_version }}/" aur/PKGBUILD
+          cd aur && makepkg --printsrcinfo > .SRCINFO
       - name: Upload version files (uncommitted)
         uses: actions/upload-artifact@v4
         with:
@@ -50,16 +51,12 @@ jobs:
             Cargo.toml
             Cargo.lock
             PKGBUILD
-            PKGBUILD.bin
+            aur/
 
   # Build with bumped version (but not committed yet)
   build:
     needs: [version]
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        os: [linux]
-        arch: [x86_64, aarch64]
+    runs-on: self-hosted
     steps:
       - uses: actions/checkout@v4
         with:
@@ -68,30 +65,36 @@ jobs:
         with:
           name: version-files
           path: .
-      - name: Install cross
-        run: cargo install cross --locked
-      - name: Clean build artifacts
-        run: cargo clean
-      - name: Build binary with cross
-        run: cross build --release --target ${{ matrix.arch }}-unknown-${{ matrix.os }}-gnu
+      - name: Build binary
+        run: cargo build --release
+      - name: Determine architecture
+        id: arch
+        run: |
+          ARCH=$(uname -m)
+          echo "arch=$ARCH" >> $GITHUB_OUTPUT
+          if [ "$ARCH" = "x86_64" ]; then
+            echo "arch_name=x86_64" >> $GITHUB_OUTPUT
+          elif [ "$ARCH" = "aarch64" ]; then
+            echo "arch_name=aarch64" >> $GITHUB_OUTPUT
+          fi
       - name: Create tarball
         run: |
-          mv target/${{ matrix.arch }}-unknown-${{ matrix.os }}-gnu/release/tmux-leap tmux-leap
-          tar -czf tmux-leap-${{ matrix.os }}-${{ matrix.arch }}.tar.gz tmux-leap
+          mv target/release/tmux-leap tmux-leap
+          tar -czf tmux-leap-linux-${{ steps.arch.outputs.arch_name }}.tar.gz tmux-leap
       - name: Generate checksum
-        run: sha256sum tmux-leap-${{ matrix.os }}-${{ matrix.arch }}.tar.gz > tmux-leap-${{ matrix.os }}-${{ matrix.arch }}.sha256
+        run: sha256sum tmux-leap-linux-${{ steps.arch.outputs.arch_name }}.tar.gz > tmux-leap-linux-${{ steps.arch.outputs.arch_name }}.sha256
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: tmux-leap-${{ matrix.os }}-${{ matrix.arch }}
+          name: tmux-leap-linux-${{ steps.arch.outputs.arch_name }}
           path: |
-            tmux-leap-${{ matrix.os }}-${{ matrix.arch }}.tar.gz
-            tmux-leap-${{ matrix.os }}-${{ matrix.arch }}.sha256
+            tmux-leap-linux-${{ steps.arch.outputs.arch_name }}.tar.gz
+            tmux-leap-linux-${{ steps.arch.outputs.arch_name }}.sha256
 
   # Only after ALL builds succeed, commit version and create release
   commit-and-release:
     needs: [version, build]
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     steps:
       - uses: actions/checkout@v4
         with:
@@ -102,32 +105,53 @@ jobs:
           path: artifacts
       - name: Restore version files from successful build
         run: |
+          mkdir -p aur
           cp artifacts/version-files/Cargo.toml .
           cp artifacts/version-files/Cargo.lock .
           cp artifacts/version-files/PKGBUILD .
-          cp artifacts/version-files/PKGBUILD.bin .
+          cp -r artifacts/version-files/aur/* aur/
       - name: Commit version bump and create tag
         run: |
           git config user.name "GitHub Action"
           git config user.email "action@github.com"
-          git add Cargo.toml Cargo.lock PKGBUILD PKGBUILD.bin
+          git add Cargo.toml Cargo.lock PKGBUILD aur/
           git commit -m "chore: bump version to v${{ needs.version.outputs.new_version }}" || echo "No changes to commit"
           git tag "v${{ needs.version.outputs.new_version }}" -f
           git push origin main
           git push origin "v${{ needs.version.outputs.new_version }}" -f
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Push to AUR
+        run: |
+          mkdir -p ~/.ssh
+          echo "$AUR_SSH_KEY" > ~/.ssh/aur
+          chmod 600 ~/.ssh/aur
+          ssh-keyscan aur.archlinux.org >> ~/.ssh/known_hosts
+          rm -rf aur
+          git clone ssh://aur@aur.archlinux.org/tmux-leap.git aur
+          cp -r artifacts/version-files/aur/* aur/
+          cd aur
+          makepkg --printsrcinfo > .SRCINFO
+          git config user.name "GitHub Action"
+          git config user.email "action@github.com"
+          git add PKGBUILD .SRCINFO tmux-leap.install
+          git commit -m "Update to v${{ needs.version.outputs.new_version }}" || echo "No changes to commit"
+          git push origin master
+        env:
+          AUR_SSH_KEY: ${{ secrets.AUR_SSH_KEY }}
       - name: Create release with assets
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: v${{ needs.version.outputs.new_version }}
-          name: v${{ needs.version.outputs.new_version }}
-          draft: false
-          prerelease: false
-          files: |
-            artifacts/tmux-leap-linux-x86_64/tmux-leap-linux-x86_64.tar.gz
-            artifacts/tmux-leap-linux-x86_64/tmux-leap-linux-x86_64.sha256
-            artifacts/tmux-leap-linux-aarch64/tmux-leap-linux-aarch64.tar.gz
-            artifacts/tmux-leap-linux-aarch64/tmux-leap-linux-aarch64.sha256
+        run: |
+          ARCH=$(uname -m)
+          if [ "$ARCH" = "x86_64" ]; then
+            ARCH_NAME="x86_64"
+          elif [ "$ARCH" = "aarch64" ]; then
+            ARCH_NAME="aarch64"
+          fi
+          gh release delete "v${{ needs.version.outputs.new_version }}" --yes 2>/dev/null || true
+          gh release create "v${{ needs.version.outputs.new_version }}" \
+            --title "v${{ needs.version.outputs.new_version }}" \
+            --notes "Release v${{ needs.version.outputs.new_version }}" \
+            artifacts/tmux-leap-linux-${ARCH_NAME}/tmux-leap-linux-${ARCH_NAME}.tar.gz \
+            artifacts/tmux-leap-linux-${ARCH_NAME}/tmux-leap-linux-${ARCH_NAME}.sha256
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

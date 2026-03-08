@@ -11,7 +11,6 @@ makedepends=()
 options=('!debug')
 install=$pkgname.install
 
-# Download precompiled binary from GitHub releases
 _arch="$CARCH"
 if [ "$_arch" = "x86_64" ]; then
     _arch="x86_64"
@@ -23,16 +22,11 @@ source=(
     "https://github.com/fibsussy/tmux-leap/releases/download/v${pkgver}/tmux-leap-linux-${_arch}.tar.gz"
     "LICENSE::https://raw.githubusercontent.com/fibsussy/tmux-leap/v${pkgver}/LICENSE"
 )
-sha256sums=('SKIP' 'SKIP')  # Update with actual checksums for releases
+sha256sums=('SKIP' 'SKIP') 
 
 package() {
-    # Install precompiled binary
     install -Dm755 "$srcdir/$pkgname" "$pkgdir/usr/bin/$pkgname"
-
-    # Install license
     install -Dm644 "$srcdir/LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
-
-    # Generate and install shell completions for main binary
     install -dm755 "$pkgdir/usr/share/bash-completion/completions"
     install -dm755 "$pkgdir/usr/share/zsh/site-functions"
     install -dm755 "$pkgdir/usr/share/fish/vendor_completions.d"

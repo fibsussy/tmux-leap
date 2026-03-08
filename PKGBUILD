@@ -1,5 +1,4 @@
 # Maintainer: fibsussy <noahlykins@gmail.com>
-# Local build - builds from current directory without network requests
 pkgname=tmux-leap
 pkgver=1.9.2
 pkgrel=1

@@ -5,29 +5,34 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        os: [linux]
-        arch: [x86_64, aarch64]
+    runs-on: self-hosted
     steps:
       - uses: actions/checkout@v4
-      - name: Install cross
-        run: cargo install cross --locked
-      - name: Clean build artifacts
-        run: cargo clean
-      - name: Build binary with cross
-        run: cross build --release --target ${{ matrix.arch }}-unknown-${{ matrix.os }}-gnu
+      - name: Build binary
+        run: cargo build --release
       - name: Create tarball
         run: |
-          mv target/${{ matrix.arch }}-unknown-${{ matrix.os }}-gnu/release/tmux-leap tmux-leap
-          tar -czf tmux-leap-${{ matrix.os }}-${{ matrix.arch }}.tar.gz tmux-leap
+          ARCH=$(uname -m)
+          if [ "$ARCH" = "x86_64" ]; then
+            ARCH_NAME="x86_64"
+          elif [ "$ARCH" = "aarch64" ]; then
+            ARCH_NAME="aarch64"
+          fi
+          mv target/release/tmux-leap tmux-leap
+          tar -czf tmux-leap-linux-${ARCH_NAME}.tar.gz tmux-leap
       - name: Generate checksum
-        run: sha256sum tmux-leap-${{ matrix.os }}-${{ matrix.arch }}.tar.gz > tmux-leap-${{ matrix.os }}-${{ matrix.arch }}.sha256
+        run: |
+          ARCH=$(uname -m)
+          if [ "$ARCH" = "x86_64" ]; then
+            ARCH_NAME="x86_64"
+          elif [ "$ARCH" = "aarch64" ]; then
+            ARCH_NAME="aarch64"
+          fi
+          sha256sum tmux-leap-linux-${ARCH_NAME}.tar.gz > tmux-leap-linux-${ARCH_NAME}.sha256
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: tmux-leap-${{ matrix.os }}-${{ matrix.arch }}
+          name: tmux-leap-linux
           path: |
-            tmux-leap-${{ matrix.os }}-${{ matrix.arch }}.tar.gz
-            tmux-leap-${{ matrix.os }}-${{ matrix.arch }}.sha256
+            tmux-leap-linux-*.tar.gz
+            tmux-leap-linux-*.sha256
